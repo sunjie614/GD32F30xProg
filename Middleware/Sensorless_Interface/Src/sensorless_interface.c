@@ -8,6 +8,7 @@
 
 #include "sensorless_interface.h"
 
+#include <math.h>
 #include <stdbool.h>
 #include "filter.h"
 #include "flying.h"
@@ -16,26 +17,28 @@
 #include "motor.h"
 #include "reciprocal.h"
 #include "transformation.h"
-#include <math.h>
 
 static volatile bool Sensorless_Enabled = {0};
 
-static bool  Sensorless_Reset             = {0};
-static bool  Sensorless_Reset_Prev        = {0};
-static float Sensorless_Threshold_Hfi     = {0};
-static float Sensorless_Threshold_Leso    = {0};
-static float Sensorless_Switch_Speed_low  = {0};
+static bool Sensorless_Reset = {0};
+static bool Sensorless_Reset_Prev = {0};
+static float Sensorless_Threshold_Hfi = {0};
+static float Sensorless_Threshold_Leso = {0};
+static float Sensorless_Switch_Speed_low = {0};
 static float Sensorless_Switch_Speed_high = {0};
-static float Sensorless_SpeedRef          = {0};
-static float Sensorless_SpeedFdbk         = {0};
-static float Sensorless_SpeedEst          = {0};
-static float Sensorless_ThetaEst          = {0};
-static float Sensorless_SampleTime        = {0};
-static float Sensorless_InvPn             = {0};
-static float Sensorless_ThetaErr          = {0};
-static float Sensorless_SpeedErr          = {0};
+static float Sensorless_Switch_Speed = {0};
+static float Sensorless_SpeedRamp = {0};
+static float Sensorless_SpeedRef = {0};
+static float Sensorless_SpeedFdbk = {0};
+static float Sensorless_SpeedEst = {0};
+static float Sensorless_ThetaEst = {0};
+static float Sensorless_SampleTime = {0};
+static float Sensorless_InvPn = {0};
+static float Sensorless_ThetaErr = {0};
+static float Sensorless_SpeedErr = {0};
 
-volatile float Sensorless_ThetAdj = {0};
+static volatile float Sensorless_ThetAdj = {0};
+static volatile bool stay = {0};
 
 static PID_Handler_t Sensorless_Theta_PID = {0};
 // static IIR1stFilter_t Sensorless_SpeedFilter1 = {0};
@@ -44,418 +47,613 @@ static IIR2ndFilter_t Sensorless_SpeedFilter1 = {0};
 
 static sensorless_method_t Sensorless_Method = FLYING;
 
-bool restore_states(void) {
-    Sensorless_Theta_PID.integral       = 0.0F;
-    Sensorless_Theta_PID.previous_error = 0.0F;
-    Sensorless_Theta_PID.output         = 0.0F;
-    Sensorless_ThetaEst                 = 0.0F;
-    Sensorless_SpeedEst                 = 0.0F;
+bool restore_states(void)
+{
+  Sensorless_Theta_PID.integral = 0.0F;
+  Sensorless_Theta_PID.previous_error = 0.0F;
+  Sensorless_Theta_PID.output = 0.0F;
+  Sensorless_ThetaEst = 0.0F;
+  Sensorless_SpeedEst = 0.0F;
 
-    return true;
+  return true;
 }
 
-bool Sensorless_Set_SampleTime(const SystemTimeConfig_t* config) {
-    if (config == NULL) {
-        return false;
-    }
+bool Sensorless_Set_SampleTime(const SystemTimeConfig_t* config)
+{
+  if (config == NULL)
+  {
+    return false;
+  }
 
-    Sensorless_SampleTime = config->current.val;  // 采样时间
+  Sensorless_SampleTime = config->current.val;  // 采样时间
 
-    return true;
+  return true;
 }
 
-bool Sensorless_Initialization(const Sensorless_Param_t* param) {
-    if (param == NULL) {
-        return false;
-    }
+bool Sensorless_Initialization(const Sensorless_Param_t* param)
+{
+  if (param == NULL)
+  {
+    return false;
+  }
 
-    Sensorless_Threshold_Hfi  = param->switch_speed + param->hysteresis;
-    Sensorless_Threshold_Leso = param->switch_speed - param->hysteresis;
-    Sensorless_Switch_Speed_low  = param->switch_speed_low;
-    Sensorless_Switch_Speed_high = param->switch_speed_high;
+  Sensorless_Threshold_Hfi = param->switch_speed + param->hysteresis;
+  Sensorless_Threshold_Leso = param->switch_speed - param->hysteresis;
+  Sensorless_Switch_Speed_low = param->switch_speed_low;
+  Sensorless_Switch_Speed_high = param->switch_speed_high;
 
-    return true;
+  return true;
 }
 
-bool Sensorless_Set_SpeedFilter(float cutoff_freq, float sample_freq) {
-    if (cutoff_freq <= 0.0F || sample_freq <= 0.0F) {
-        return false;
-    }
-    IIR2ndFilter_Init(
-        &Sensorless_SpeedFilter2, cutoff_freq, sample_freq);
-    IIR2ndFilter_Init(
-        &Sensorless_SpeedFilter1, cutoff_freq, sample_freq);
-    return true;
+bool Sensorless_Set_SpeedFilter(float cutoff_freq, float sample_freq)
+{
+  if (cutoff_freq <= 0.0F || sample_freq <= 0.0F)
+  {
+    return false;
+  }
+  IIR2ndFilter_Init(&Sensorless_SpeedFilter2, cutoff_freq, sample_freq);
+  IIR2ndFilter_Init(&Sensorless_SpeedFilter1, cutoff_freq, sample_freq);
+  return true;
 }
 
-bool Sensorless_Set_PidParams(const PID_Handler_t* pid_handler) {
-    if (pid_handler == NULL) {
-        return false;
-    }
-    Sensorless_Theta_PID = *pid_handler;
-    return true;
+bool Sensorless_Set_PidParams(const PID_Handler_t* pid_handler)
+{
+  if (pid_handler == NULL)
+  {
+    return false;
+  }
+  Sensorless_Theta_PID = *pid_handler;
+  return true;
 }
 
-bool Sensorless_Set_MotorParams(const MotorParam_t* motor_param) {
-    if (motor_param == NULL || motor_param->inv_MotorPn <= 0) {
-        return false;
-    }
+bool Sensorless_Set_MotorParams(const MotorParam_t* motor_param)
+{
+  if (motor_param == NULL || motor_param->inv_MotorPn <= 0)
+  {
+    return false;
+  }
 
-    Sensorless_InvPn = motor_param->inv_MotorPn;
-    return true;
+  Sensorless_InvPn = motor_param->inv_MotorPn;
+  return true;
 }
 
-bool Sensorless_Set_ResetFlag(bool reset) {
-    Sensorless_Reset = reset;
-    return Sensorless_Reset;
+bool Sensorless_Set_ResetFlag(bool reset)
+{
+  Sensorless_Reset = reset;
+  return Sensorless_Reset;
 }
 
-bool Sensorless_Get_Reset(void) {
-    return Sensorless_Reset;
+bool Sensorless_Get_Reset(void)
+{
+  return Sensorless_Reset;
 }
 
-bool Sensorless_Set_Method(sensorless_method_t method, bool enable) {
-    if (enable) {
-        Sensorless_Method |= method;
-    } else {
-        Sensorless_Method &= ~method;
-    }
+bool Sensorless_Set_Method(sensorless_method_t method, bool enable)
+{
+  if (enable)
+  {
+    Sensorless_Method |= method;
+  }
+  else
+  {
+    Sensorless_Method &= ~method;
+  }
 
-    return true;
+  return true;
 }
 
-sensorless_method_t Sensorless_Get_Method(void) {
-    return Sensorless_Method;
+sensorless_method_t Sensorless_Get_Method(void)
+{
+  return Sensorless_Method;
 }
 
-Clark_t Sensorless_Get_SmoEmf(void) {
-    return Leso_Get_EmfEst();
+Clark_t Sensorless_Get_SmoEmf(void)
+{
+  return Leso_Get_EmfEst();
 }
 
-bool Sensorless_Set_Voltage(Clark_t voltage) {
-    if (Hfi_Get_Enabled()) {
-    }
+bool Sensorless_Set_Voltage(Clark_t voltage)
+{
+  if (Hfi_Get_Enabled())
+  {
+  }
 
-    if (Leso_Get_Enabled()) {
-        Leso_Set_Voltage(voltage);
-    }
+  if (Leso_Get_Enabled())
+  {
+    Leso_Set_Voltage(voltage);
+  }
 
-    return true;
+  return true;
 }
 
-bool Sensorless_Set_Current(Clark_t current) {
-    // if (Hfi_Get_Enabled()) {
-    //     Hfi_Set_Current(current);
-    // }
+bool Sensorless_Set_Current(Clark_t current)
+{
+  // if (Hfi_Get_Enabled()) {
+  //     Hfi_Set_Current(current);
+  // }
 
-    Leso_Set_Current(current);
+  Leso_Set_Current(current);
 
-    return true;
+  return true;
 }
 
-void Sensorless_Set_SpeedFdbk(float fdbk) {
-    Sensorless_SpeedFdbk = fdbk;
+void Sensorless_Set_SpeedFdbk(float fdbk)
+{
+  Sensorless_SpeedFdbk = fdbk;
 }
 
-void Sensorless_Set_SpeedRef(float ref) {
-    Sensorless_SpeedRef = ref;
+void Sensorless_Set_SpeedRamp(float ramp)
+{
+  Sensorless_SpeedRamp = ramp;
+}
+
+void Sensorless_Set_SpeedRef(float ref)
+{
+  Sensorless_SpeedRef = ref;
 }
 
 // void Sensorless_Set_Angle(float angle) {
 //     // Sensorless_ThetaEst = angle;
 // }
 
-AngleResult_t Sensorless_Get_Error(void) {
-    return (AngleResult_t){.theta = Sensorless_ThetaErr,
-                           .speed = Sensorless_SpeedErr};
+AngleResult_t Sensorless_Get_Error(void)
+{
+  return (AngleResult_t){.theta = Sensorless_ThetaErr, .speed = Sensorless_SpeedErr};
 }
 
-bool Sensorless_Calculate_Err(AngleResult_t result) {
-    if (!Sensorless_Enabled) {
-        return false;
-    }
+bool Sensorless_Calculate_Err(AngleResult_t result)
+{
+  if (!Sensorless_Enabled)
+  {
+    return false;
+  }
 
-    float theta = result.theta;
-    float speed = result.speed;
-    float error = 0.0F;
+  float theta = result.theta;
+  float speed = result.speed;
+  float error = 0.0F;
 
-    error = wrap_theta_2pi(theta - Sensorless_ThetaEst + PI) - PI;
-    Sensorless_ThetaErr = rad2deg(error);
-    if (Sensorless_ThetaErr > 90.0F) {
-        Sensorless_ThetaErr -= 180.0F;
-    } else if (Sensorless_ThetaErr < -90.0F) {
-        Sensorless_ThetaErr += 180.0F;
-    }
-    Sensorless_SpeedErr = speed - Sensorless_SpeedEst;
+  error = wrap_theta_2pi(theta - Sensorless_ThetaEst + PI) - PI;
+  Sensorless_ThetaErr = rad2deg(error);
+  if (Sensorless_ThetaErr > 90.0F)
+  {
+    Sensorless_ThetaErr -= 180.0F;
+  }
+  else if (Sensorless_ThetaErr < -90.0F)
+  {
+    Sensorless_ThetaErr += 180.0F;
+  }
+  Sensorless_SpeedErr = speed - Sensorless_SpeedEst;
 
-    Hfi_Calc_ThetaErr(theta);
-    Hfi_Calc_SpeedErr(speed);
+  Hfi_Calc_ThetaErr(theta);
+  Hfi_Calc_SpeedErr(speed);
 
-    Leso_Calc_ThetaErr(theta);
-    Leso_Calc_SpeedErr(speed);
+  Leso_Calc_ThetaErr(theta);
+  Leso_Calc_SpeedErr(speed);
 
-    return true;
+  return true;
 }
 
-static inline float pll_update(float error, bool reset) {
-    // 更新锁相环
-    float omega = Pid_Update(error, reset, &Sensorless_Theta_PID);
+static inline float pll_update(float error, bool reset)
+{
+  // 更新锁相环
+  float omega = Pid_Update(error, reset, &Sensorless_Theta_PID);
 
-    if (reset) {
-        return omega;
-    }
-
-    Sensorless_ThetaEst += omega * Sensorless_SampleTime;
-    if (Sensorless_ThetaEst > M_2PI) {
-        Sensorless_ThetaEst -= M_2PI;
-    }
-    if (Sensorless_ThetaEst < 0.0F) {
-        Sensorless_ThetaEst += M_2PI;
-    }
-    Sensorless_ThetaEst = wrap_theta_2pi(Sensorless_ThetaEst);
+  if (reset)
+  {
     return omega;
+  }
+
+  Sensorless_ThetaEst += omega * Sensorless_SampleTime;
+  if (Sensorless_ThetaEst > M_2PI)
+  {
+    Sensorless_ThetaEst -= M_2PI;
+  }
+  if (Sensorless_ThetaEst < 0.0F)
+  {
+    Sensorless_ThetaEst += M_2PI;
+  }
+  Sensorless_ThetaEst = wrap_theta_2pi(Sensorless_ThetaEst);
+  return omega;
 }
 
-static inline float calculate_speed(float omega) {
-    static uint16_t speed_cnt = 0x0000U;
-    static float    speed_int = 0.0F;
-    // float           speed1    = 0.0F;
-    // float           speed2    = 0.0F;
-    float speed = 0.0F;
-    speed_int += radps2rpm(omega) * Sensorless_InvPn * 0.1F;
-    speed_cnt++;
-    if (speed_cnt < 0x000AU) {
-        return Sensorless_SpeedEst;
+static inline float calculate_speed(float omega)
+{
+  static uint16_t speed_cnt = 0x0000U;
+  static float speed_int = 0.0F;
+  // float           speed1    = 0.0F;
+  // float           speed2    = 0.0F;
+  float speed = 0.0F;
+  speed_int += radps2rpm(omega) * Sensorless_InvPn * 0.1F;
+  speed_cnt++;
+  if (speed_cnt < 0x000AU)
+  {
+    return Sensorless_SpeedEst;
+  }
+  speed_cnt = 0x0000U;
+  // speed1 = IIR1stFilter_Update(&Sensorless_SpeedFilter1, speed_int);
+  // speed2 = IIR2ndFilter_Update(&Sensorless_SpeedFilter2, speed_int);
+  speed = IIR2ndFilter_Update(&Sensorless_SpeedFilter2, speed_int);
+  // if (Sensorless_Method == LES_OBSERVER) {
+  //     speed = speed2;
+  // } else {
+  //     speed = speed2;
+  // }
+  speed_int = 0.0F;
+  Sensorless_SpeedEst = speed;
+  return speed;
+}
+
+AngleResult_t Sensorless_Update_Position(void)
+{
+  if (!Sensorless_Enabled)
+  {
+    return (AngleResult_t){.speed = Sensorless_SpeedEst,
+                           .theta = Sensorless_ThetaEst + Sensorless_ThetAdj};
+  }
+  // float error = 0.0F;
+  // float omega = 0.0F;
+  // float speed = 0.0F;
+  // if (fabsf(Sensorless_SpeedRamp) >= Sensorless_Switch_Speed) {
+  //     if (fabsf(Sensorless_SpeedFdbk) >= Sensorless_Switch_Speed) {
+  //         Sensorless_Method = LES_OBSERVER;
+  //         error             = Leso_Get_PllErr();
+  //     } else {
+  //         Sensorless_Method = HF_INJECTION;
+  //         error             = Hfi_Get_PllErr();
+  //     }
+  // } else {
+  //     if (fabsf(Sensorless_SpeedFdbk) <= Sensorless_Switch_Speed) {
+  //         Sensorless_Method = HF_INJECTION;
+  //         error             = Hfi_Get_PllErr();
+  //     } else {
+  //         Sensorless_Method = LES_OBSERVER;
+  //         error             = Leso_Get_PllErr();
+  //     }
+  // }
+
+  static uint16_t leso_reverse_cnt = 0;
+
+  static uint16_t hfi_reverse_cnt = 0;
+  static sensorless_method_t method = HF_INJECTION;
+  static bool Speed_switch_low_high = false;
+  static bool Speed_switch_high_low = false;
+
+  AngleResult_t leso_result = {0};
+  AngleResult_t hfi_result = {0};
+
+  leso_result = Leso_Get_Result();
+  hfi_result = Hfi_Get_Result();
+  leso_result.speed = IIR2ndFilter_Update(&Sensorless_SpeedFilter2, leso_result.speed);
+  hfi_result.speed = IIR2ndFilter_Update(&Sensorless_SpeedFilter1, hfi_result.speed);
+  float speed_err = leso_result.speed - hfi_result.speed;
+  leso_result.theta = wrap_theta_2pi(leso_result.theta + leso_reverse_cnt * M_PI);
+  hfi_result.theta = wrap_theta_2pi(hfi_result.theta + hfi_reverse_cnt * M_PI);
+  float theta_err = wrap_theta_pi(leso_result.theta - hfi_result.theta);
+
+  //   if (Leso_Get_Enabled() && Hfi_Get_Enabled() && (speed_err < 20.0F && speed_err > -20.0F))
+  //   {
+  //     if (theta_err > M_PI_2 || theta_err < -M_PI_2)
+  //     {
+  //       hfi_reverse_cnt++;
+  //       if ((int)hfi_reverse_cnt % 5 >= 4)
+  //       {
+  //         Hfi_Set_Theta(hfi_result.theta + M_PI);
+  //         // hfi_reverse_cnt = 0;
+  //       }
+  //     }
+  //   }
+  // static float ration = 0.0F;
+
+  if (fabsf(Sensorless_SpeedFdbk) >= Sensorless_Switch_Speed_high)
+  {
+    Speed_switch_high_low = false;
+    Speed_switch_low_high = false;
+    if (Leso_Get_Enabled() && Hfi_Get_Enabled() && (speed_err < 20.0F && speed_err > -20.0F))
+    {
+      if (theta_err > M_PI_2 || theta_err < -M_PI_2)
+      {
+        hfi_reverse_cnt++;
+        if (hfi_reverse_cnt >= 2)
+        {
+          hfi_reverse_cnt = 0;
+        }
+        // hfi_reverse_cnt=1;
+      }
     }
-    speed_cnt = 0x0000U;
-    // speed1 = IIR1stFilter_Update(&Sensorless_SpeedFilter1, speed_int);
-    // speed2 = IIR2ndFilter_Update(&Sensorless_SpeedFilter2, speed_int);
-    speed = IIR2ndFilter_Update(&Sensorless_SpeedFilter2, speed_int);
-    // if (Sensorless_Method == LES_OBSERVER) {
-    //     speed = speed2;
-    // } else {
-    //     speed = speed2;
+    // ration = 1.0F;
+    if (hfi_result.speed >= Sensorless_Switch_Speed_high)
+    {
+      method = LES_OBSERVER;
+    }
+  }
+  else if (fabsf(Sensorless_SpeedFdbk) <= Sensorless_Switch_Speed_low)
+  {
+    Speed_switch_high_low = false;
+    Speed_switch_low_high = false;
+    if (Leso_Get_Enabled() && Hfi_Get_Enabled() && (speed_err < 20.0F && speed_err > -20.0F))
+    {
+      if (theta_err > M_PI_2 || theta_err < -M_PI_2)
+      {
+        leso_reverse_cnt++;
+        if (leso_reverse_cnt >= 2)
+        {
+          leso_reverse_cnt = 0;
+        }
+      }
+    }
+    // ration = 0.0F;
+    if (hfi_result.speed < Sensorless_Switch_Speed_low)
+    {
+      method = HF_INJECTION;
+    }
+  }
+  else
+  {
+    // float ration_target = (Sensorless_SpeedFdbk - Sensorless_Switch_Speed_low - 30.0F) /
+    //                       (Sensorless_Switch_Speed_high - Sensorless_Switch_Speed_low - 60.0F);
+    // if (ration_target > 1.0F)
+    // {
+    //   ration_target = 1.0F;
     // }
-    speed_int           = 0.0F;
-    Sensorless_SpeedEst = speed;
-    return speed;
-}
 
-AngleResult_t Sensorless_Update_Position(void) {
-    if (!Sensorless_Enabled) {
-        return (AngleResult_t){
-            .speed = Sensorless_SpeedEst,
-            .theta = Sensorless_ThetaEst + Sensorless_ThetAdj};
-    }
-    // float error = 0.0F;
-    // float omega = 0.0F;
-    // float speed = 0.0F;
-    // if (fabsf(Sensorless_SpeedRef) >= Sensorless_Switch_Speed) {
-    //     if (fabsf(Sensorless_SpeedFdbk) >= Sensorless_Switch_Speed) {
-    //         Sensorless_Method = LES_OBSERVER;
-    //         error             = Leso_Get_PllErr();
-    //     } else {
-    //         Sensorless_Method = HF_INJECTION;
-    //         error             = Hfi_Get_PllErr();
-    //     }
-    // } else {
-    //     if (fabsf(Sensorless_SpeedFdbk) <= Sensorless_Switch_Speed) {
-    //         Sensorless_Method = HF_INJECTION;
-    //         error             = Hfi_Get_PllErr();
-    //     } else {
-    //         Sensorless_Method = LES_OBSERVER;
-    //         error             = Leso_Get_PllErr();
-    //     }
+    // else if (ration_target < 0.0F)
+    // {
+    //   ration_target = 0.0F;
     // }
-    static float  leso_reverse_cnt = 0.0F;
-    static float  hfi_reverse_cnt  = 0.0F;
-    AngleResult_t leso_result      = {0};
-    AngleResult_t hfi_result       = {0};
-    leso_result                    = Leso_Get_Result();
-    hfi_result                     = Hfi_Get_Result();
-    leso_result.speed = IIR2ndFilter_Update(&Sensorless_SpeedFilter2,
-                                            leso_result.speed);
-    hfi_result.speed  = IIR2ndFilter_Update(&Sensorless_SpeedFilter1,
-                                           hfi_result.speed);
-    float speed_err   = leso_result.speed - hfi_result.speed;
-    float theta_err
-        = wrap_theta_pi(leso_result.theta - hfi_result.theta);
-    if (fabsf(Sensorless_SpeedFdbk) >= Sensorless_Switch_Speed_high) {
-        if (Leso_Get_Enabled() && Hfi_Get_Enabled()
-            && (speed_err < 40.0F && speed_err > -40.0F)) {
-            if (theta_err > M_PI_2 || theta_err < -M_PI_2) {
-                hfi_reverse_cnt++;
-                if (hfi_reverse_cnt >= 2) {
-                    Hfi_Set_Theta(hfi_result.theta + M_PI);
-                    hfi_reverse_cnt = 0.0F;
-                }
-            }
+    // const float alpha = 0.005F;
+    // ration = ration + alpha * (ration_target - ration);
+    // Sensorless_SpeedEst = hfi_result.speed * (1 - ration) + leso_result.speed * ration;
+    // Sensorless_ThetaEst = hfi_result.theta + theta_err * ration;
+    // Sensorless_ThetaEst = wrap_theta_2pi(Sensorless_ThetaEst);
+
+    if (fabsf(Sensorless_SpeedRef) >= Sensorless_Switch_Speed_high)
+    {
+      // if (fabsf(hfi_result.speed) > Sensorless_Switch_Speed + 30.0F)
+      // {
+        if (method == HF_INJECTION)
+        {
+          // Leso_Set_Theta(hfi_result.theta + leso_reverse_cnt * M_PI);
+          if(theta_err < 0.2F && theta_err > -0.2F)
+          {method = LES_OBSERVER;}
         }
-        Sensorless_SpeedEst = leso_result.speed;
-        Sensorless_ThetaEst = leso_result.theta;
-    } else if (fabsf(Sensorless_SpeedFdbk)
-               <= Sensorless_Switch_Speed_low) {
-        if (Leso_Get_Enabled() && Hfi_Get_Enabled()
-            && (speed_err < 40.0F && speed_err > -40.0F)) {
-            if (theta_err > M_PI_2 || theta_err < -M_PI_2) {
-                leso_reverse_cnt++;
-                if (leso_reverse_cnt >= 2) {
-                    Leso_Set_Theta(hfi_result.theta + M_PI);
-                    leso_reverse_cnt = 0.0F;
-                }
-            }
-        }
-        Sensorless_SpeedEst = hfi_result.speed;
-        Sensorless_ThetaEst = hfi_result.theta;
-    } else {
-        float ratio
-            = (Sensorless_SpeedFdbk - Sensorless_Switch_Speed_low)
-              / (Sensorless_Switch_Speed_high
-                 - Sensorless_Switch_Speed_low);
-        Sensorless_SpeedEst = hfi_result.speed * (1 - ratio)
-                              + leso_result.speed * ratio;
-        Sensorless_ThetaEst = hfi_result.theta + theta_err * ratio;
-        Sensorless_ThetaEst = wrap_theta_2pi(Sensorless_ThetaEst);
+      // }
+      // if (method == HF_INJECTION)
+      // {
+      //   Speed_switch_low_high = true;
+      // }
     }
+    else if (fabsf(Sensorless_SpeedRef) <= Sensorless_Switch_Speed_low)
+    {
+   
 
-    // omega = pll_update(error, Sensorless_Reset);
-    // speed = calculate_speed(omega);
+        if (method == LES_OBSERVER)
+        {
+          // Hfi_Set_Theta(leso_result.theta + hfi_reverse_cnt * M_PI);
+          if(theta_err < 0.2F && theta_err > -0.2F)
+          {
+          method = HF_INJECTION;}
+        }
+    
+      // if (method == LES_OBSERVER)
+      // {
+      //   Speed_switch_high_low = true;
+      // }
+    }
+    else
+    {
+      stay = true;
+    }
+  }
 
-    // Leso_Set_Theta(Sensorless_ThetaEst);
-    // Leso_Set_Speed(speed);
-    // Hfi_Set_Theta(Sensorless_ThetaEst);
+  // if (Speed_switch_high_low)
+  // {
+  //   Sensorless_SpeedEst=
+  // }
+  // if (Speed_switch_low_high)
+  // {
+  //   /* code */
+  // }
 
-    return (AngleResult_t){
-        .speed = Sensorless_SpeedEst,
-        .theta = Sensorless_ThetaEst + Sensorless_ThetAdj};
+  // else
+  // { }
+    if (method == HF_INJECTION)
+    {
+      Sensorless_SpeedEst = hfi_result.speed;
+      Sensorless_ThetaEst = hfi_result.theta;
+    }
+    else if (method == LES_OBSERVER)
+    {
+      Sensorless_SpeedEst = leso_result.speed;
+      Sensorless_ThetaEst = leso_result.theta;
+    }
+ 
+  // omega = pll_update(error, Sensorless_Reset);
+  // speed = calculate_speed(omega);
+
+  // Leso_Set_Theta(Sensorless_ThetaEst);
+  // Leso_Set_Speed(speed);
+  // Hfi_Set_Theta(Sensorless_ThetaEst);
+
+  return (AngleResult_t){.speed = Sensorless_SpeedEst,
+                         .theta = Sensorless_ThetaEst + Sensorless_ThetAdj};
 }
 
-AngleResult_t Sensorless_Get_HfiResult(void) {
-    return Hfi_Get_Result();
+AngleResult_t Sensorless_Get_HfiResult(void)
+{
+  return Hfi_Get_Result();
 }
 
-AngleResult_t Sensorless_Get_LesoResult(void) {
-    return Leso_Get_Result();
+AngleResult_t Sensorless_Get_LesoResult(void)
+{
+  return Leso_Get_Result();
 }
 
-static inline void enable_smo(bool enable) {
-    if (enable) {
-        if (!Leso_Get_Enabled()) {
-            Leso_Set_Enabled(true);
-        }
-    } else {
-        if (Leso_Get_Enabled()) {
-            Leso_Set_Enabled(false);
-        }
+static inline void enable_smo(bool enable)
+{
+  if (enable)
+  {
+    if (!Leso_Get_Enabled())
+    {
+      Leso_Set_Enabled(true);
     }
+  }
+  else
+  {
+    if (Leso_Get_Enabled())
+    {
+      Leso_Set_Enabled(false);
+    }
+  }
 }
 
-static inline void enable_hfi(bool enable) {
-    if (enable) {
-        if (!Hfi_Get_Enabled()) {
-            Hfi_Set_Enabled(true);
-            float estimate = 0.0F, target = 0.0F, error = 0.0F;
-            estimate = Hfi_Get_Result().theta;
-            target   = Sensorless_ThetaEst;
-            error    = wrap_theta_2pi(target - estimate + PI) - PI;
-            if (error >= M_PI_4 || error <= -M_PI_4) {
-                Hfi_Set_InitialPosition(target);
-            }
-        }
-    } else {
-        if (Hfi_Get_Enabled()) {
-            Hfi_Set_Enabled(false);
-        }
+static inline void enable_hfi(bool enable)
+{
+  if (enable)
+  {
+    if (!Hfi_Get_Enabled())
+    {
+      Hfi_Set_Enabled(true);
+      float estimate = 0.0F, target = 0.0F, error = 0.0F;
+      estimate = Hfi_Get_Result().theta;
+      target = Sensorless_ThetaEst;
+      error = wrap_theta_2pi(target - estimate + PI) - PI;
+      if (error >= M_PI_4 || error <= -M_PI_4)
+      {
+        Hfi_Set_InitialPosition(target);
+      }
     }
+  }
+  else
+  {
+    if (Hfi_Get_Enabled())
+    {
+      Hfi_Set_Enabled(false);
+    }
+  }
 }
 
-static inline void judge_strategy(float ref, float fdbk) {
-    if (fabsf(ref) >= Sensorless_Threshold_Leso) {
-        if (fabsf(fdbk) >= Sensorless_Threshold_Leso) {
-            enable_smo(true);
-        }
-    } else {
-        if (fabsf(fdbk) < Sensorless_Threshold_Leso) {
-            enable_smo(false);
-        }
+static inline void judge_strategy(float ref, float fdbk)
+{
+  if (fabsf(ref) >= Sensorless_Threshold_Leso)
+  {
+    if (fabsf(fdbk) >= Sensorless_Threshold_Leso)
+    {
+      enable_smo(true);
     }
-    if (fabsf(ref) <= Sensorless_Threshold_Hfi) {
-        if (fabsf(fdbk) <= Sensorless_Threshold_Hfi) {
-            enable_hfi(true);
-        }
-    } else {
-        if (fabsf(fdbk) > Sensorless_Threshold_Hfi) {
-            enable_hfi(false);
-        }
+  }
+  else
+  {
+    if (fabsf(fdbk) < Sensorless_Threshold_Leso)
+    {
+      enable_smo(false);
     }
+  }
+  if (fabsf(ref) <= Sensorless_Threshold_Hfi)
+  {
+    if (fabsf(fdbk) <= Sensorless_Threshold_Hfi)
+    {
+      enable_hfi(true);
+    }
+  }
+  else
+  {
+    if (fabsf(fdbk) > Sensorless_Threshold_Hfi)
+    {
+      enable_hfi(false);
+    }
+  }
 }
 
-bool Sensorless_Calculate(void) {
-    if (Sensorless_Reset) {
-        if (!Sensorless_Reset_Prev) {
-            // restore_states();
-        }
-        return false;
-    } else if (Sensorless_Reset_Prev) {
-        Sensorless_Set_Method(FLYING, true);
-        Flying_Set_Enabled(true);
+bool Sensorless_Calculate(void)
+{
+  if (Sensorless_Reset)
+  {
+    if (!Sensorless_Reset_Prev)
+    {
+      // restore_states();
+      Leso_Set_Speed(0);
+      Leso_Set_Theta(0);
+      Hfi_Set_Theta(0);
+      Hfi_Set_Speed(0);
+      Sensorless_SpeedEst = 0.0F;
+      Sensorless_ThetaEst = 0.0F;
     }
+    return false;
+  }
+  else if (Sensorless_Reset_Prev)
+  {
+    Sensorless_Set_Method(FLYING, true);
+    Flying_Set_Enabled(true);
+  }
 
-    if (Flying_Is_Completed()) {
-        Sensorless_Set_Method(FLYING, false);
-    } else {
-        Flying_Update(Sensorless_Reset);
-    }
+  if (Flying_Is_Completed())
+  {
+    Sensorless_Set_Method(FLYING, false);
+  }
+  else
+  {
+    Flying_Update(Sensorless_Reset);
+  }
 
-    judge_strategy(Sensorless_SpeedRef, Sensorless_SpeedFdbk);
+  judge_strategy(Sensorless_SpeedRamp, Sensorless_SpeedFdbk);
 
-    if (Hfi_Get_Enabled()) {
-        Hfi_Update();
-    }
+  if (Hfi_Get_Enabled())
+  {
+    Hfi_Update();
+  }
 
-    if (Leso_Get_Enabled()) {
-        Leso_Update_Beta();
-        Leso_Update_EmfEstA();
-        Leso_Update_EmfEstB();
-        Leso_Update();
-    }
+  if (Leso_Get_Enabled())
+  {
+    Leso_Update_Beta();
+    Leso_Update_EmfEstA();
+    Leso_Update_EmfEstB();
+    Leso_Update();
+  }
 
-    Sensorless_Reset_Prev = Sensorless_Reset;
+  Sensorless_Reset_Prev = Sensorless_Reset;
 
-    return true;
+  return true;
 }
 
-Park_t Sensorless_Inject_Voltage(Park_t voltage) {
-    if (!Sensorless_Enabled) {
-        return voltage;
-    }
-
-    if (Sensorless_Reset) {
-        return voltage;
-    }
-
-    if (Hfi_Get_Enabled()) {
-        Park_t inj = Hfi_Get_Inject_Voltage();
-        voltage.d += inj.d;
-        voltage.q += inj.q;
-        return voltage;
-    }
-
+Park_t Sensorless_Inject_Voltage(Park_t voltage)
+{
+  if (!Sensorless_Enabled)
+  {
     return voltage;
+  }
+
+  if (Sensorless_Reset)
+  {
+    return voltage;
+  }
+
+  if (Hfi_Get_Enabled())
+  {
+    Park_t inj = Hfi_Get_Inject_Voltage();
+    voltage.d += inj.d;
+    voltage.q += inj.q;
+    return voltage;
+  }
+
+  return voltage;
 }
 
-Clark_t Sensorless_FilterCurrent(Clark_t current) {
-    if (!Sensorless_Enabled) {
-        return current;
-    }
+Clark_t Sensorless_FilterCurrent(Clark_t current)
+{
+  if (!Sensorless_Enabled)
+  {
+    return current;
+  }
 
-    if (Sensorless_Reset) {
-        return current;
-    }
+  if (Sensorless_Reset)
+  {
+    return current;
+  }
 
-    if (!Hfi_Get_Enabled()) {
-        return current;
-    }
+  if (!Hfi_Get_Enabled())
+  {
+    return current;
+  }
 
-    return Hfi_Process_Current(current);
+  return Hfi_Process_Current(current);
 }

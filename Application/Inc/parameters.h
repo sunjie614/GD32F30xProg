@@ -158,11 +158,11 @@
 /*********************************************************************/
 /* 无位置传感器策略控制 */
 #define SENSORLESS_HYSTERESIS   150.0F /* 无传感器滞环宽度：50rpm */
-#define SENSORLESS_SWITCH_SPEED 450.0F /* 无传感器切换速度：460rpm */
+#define SENSORLESS_SWITCH_SPEED 500.0F /* 无传感器切换速度：460rpm */
 #define SENSORLESS_SWITCH_SPEED_LOW \
-    410.0F /* 无传感器切换速度低限：400rpm */
+    400.0F /* 无传感器切换速度低限：400rpm */
 #define SENSORLESS_SWITCH_SPEED_HIGH \
-    490.0F                             /* 无传感器切换速度高限：500rpm */
+    600.0F                             /* 无传感器切换速度高限：500rpm */
 
 /* 无位置PLL跟踪器参数 */
 #define SENSORLESS_PLL_KP         50.0F  /* PLL比例系数 */
@@ -188,8 +188,8 @@
 #define HFI_LOW_PASS_CUTOFF_FREQ 100.0F /* 误差信号截止频率：100Hz */
 
 /* 高频注入PLL跟踪器参数 */
-#define HFI_PLL_KP             50.0F  /* PLL比例系数 */
-#define HFI_PLL_KI             625.0F /* PLL积分系数 */
+#define HFI_PLL_KP             40.0F  /* PLL比例系数 */
+#define HFI_PLL_KI             400.0F /* PLL积分系数 */
 #define HFI_PLL_KD             0.0F   /* PLL微分系数 */
 #define HFI_PLL_MAX_OUTPUT     500.0F /* PLL最大输出 */
 #define HFI_PLL_MIN_OUTPUT     (-1 * HFI_PLL_MAX_OUTPUT) /* PLL最小输出 */
@@ -198,7 +198,7 @@
 /* LESO参数 */
 #define LESO_WC_GAIN 6.5F    /* 观测器带宽系数 */
 #define LESO_WC_MAX  3140.0F /* 观测器带宽最大值 */
-#define LESO_WC_MIN  2000.0F /* 观测器带宽最小值 */
+#define LESO_WC_MIN  500.0F /* 观测器带宽最小值 */
 
 /* LESO观测器PLL跟踪器参数 */
 #define SMO_PLL_KP             50.0F  /* PLL比例系数 */

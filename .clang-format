@@ -1,79 +1,10 @@
-# 基于Google代码风格，适合嵌入式C项目（兼容更多Clang版本）
+
 BasedOnStyle: Google
-
-# 基本格式设置
-IndentWidth: 4
-TabWidth: 4
-UseTab: Never
-ColumnLimit: 72 # 适配嵌入式窄屏环境
-
-# 大括号风格
-BreakBeforeBraces: Attach
-BraceWrapping:
-  AfterFunction: false
-
-# 函数和语句格式
-AllowShortFunctionsOnASingleLine: None
-AllowShortIfStatementsOnASingleLine: Never
-AllowShortLoopsOnASingleLine: false
-AllowShortCaseLabelsOnASingleLine: false
-AllowShortBlocksOnASingleLine: Never
-
-# 函数参数换行
-BinPackArguments: false
-BinPackParameters: false
-BreakConstructorInitializers: BeforeComma
-AlignAfterOpenBracket: Align
-
-# 二元运算符换行
-BreakBeforeBinaryOperators: All
-AlignOperands: true
-
-# 指针对齐
+IndentWidth: 2
+ColumnLimit: 100
+AllowShortFunctionsOnASingleLine: Inline
 DerivePointerAlignment: false
 PointerAlignment: Left
-
-# 头文件包含
 SortIncludes: true
 IncludeBlocks: Preserve
-IncludeCategories:
-  - Regex: '^<stdint\.h>|<stdbool\.h>|<string\.h>|<stddef\.h>'
-    Priority: 1
-  - Regex: "^<driver/.*>|<hal/.*>|<cmsis/.*>"
-    Priority: 2
-  - Regex: '^"project/.*"|".*_priv\.h"'
-    Priority: 3
-  - Regex: ".*"
-    Priority: 4
-
-# 空格设置
-SpaceAfterCStyleCast: false
-SpaceBeforeParens: ControlStatements
-SpaceInEmptyParentheses: false
-SpacesInCStyleCastParentheses: false
-SpacesInParentheses: false
-SpacesInSquareBrackets: false
-
-# 对齐设置
-AlignConsecutiveAssignments: true
-AlignConsecutiveDeclarations: true
-AlignConsecutiveMacros: true # 对齐连续宏定义（关键保留项）
-AlignTrailingComments: true
-
-# 预处理指令缩进
-IndentPPDirectives: AfterHash
-
-# 换行设置
-BreakBeforeTernaryOperators: true
-BreakStringLiterals: true
-BreakAfterJavaFieldAnnotations: false
-
-# 缩进设置
-IndentCaseLabels: false
-IndentGotoLabels: false
-IndentWrappedFunctionNames: false
-
-# 其他优化
-KeepEmptyLinesAtTheStartOfBlocks: false
-MaxEmptyLinesToKeep: 1
-ReflowComments: false
+BreakBeforeBraces: Allman
