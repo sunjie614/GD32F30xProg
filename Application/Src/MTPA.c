@@ -207,7 +207,7 @@ bool MTPA_compute_for_T(float T_req, MTPA_Point* out_p) {
         out_p->T_req = 0.0f;
         out_p->Psi_s = 0.0f; /* 可以置 0 或者最小 */
         out_p->gamma = 0.0f;
-        out_p->Id    = 0.5f; /* 题目特定规定 */
+        out_p->Id    = 0.5f; 
         out_p->Iq    = 0.0f;
         out_p->valid = true;
         return true;

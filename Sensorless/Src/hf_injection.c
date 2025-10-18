@@ -235,6 +235,7 @@ AngleResult_t Hfi_Get_Result(void) {
     AngleResult_t angle_result;
     angle_result.theta = Hfi_Theta;
     angle_result.speed = Hfi_Speed;
+
     return angle_result;
 }
 

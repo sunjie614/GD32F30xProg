@@ -42,8 +42,10 @@ typedef enum {
 } sensorless_state_t;
 
 typedef struct {
-    float hysteresis;    // 滞环宽度
-    float switch_speed;  // 切换速度
+    float hysteresis;         // 滞环宽度
+    float switch_speed;       // 切换速度
+    float switch_speed_low;   // 切换速度低限
+    float switch_speed_high;  // 切换速度高限
 } Sensorless_Param_t;
 
 bool Sensorless_Set_SampleTime(const SystemTimeConfig_t* config);
@@ -81,6 +83,10 @@ bool Sensorless_Calculate_Err(AngleResult_t result);
 AngleResult_t Sensorless_Get_Error(void);
 
 AngleResult_t Sensorless_Update_Position(void);
+
+AngleResult_t Sensorless_Get_HfiResult(void);
+
+AngleResult_t Sensorless_Get_LesoResult(void);
 
 bool Sensorless_Calculate(void);
 

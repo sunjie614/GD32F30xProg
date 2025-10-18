@@ -108,8 +108,10 @@ bool init_module_protect(void) {
 
 bool init_module_sensorless(void) {
     Sensorless_Param_t sensorless_param
-        = {.switch_speed = SENSORLESS_SWITCH_SPEED,
-           .hysteresis   = SENSORLESS_HYSTERESIS};
+        = {.switch_speed      = SENSORLESS_SWITCH_SPEED,
+           .hysteresis        = SENSORLESS_HYSTERESIS,
+           .switch_speed_low  = SENSORLESS_SWITCH_SPEED_LOW,
+           .switch_speed_high = SENSORLESS_SWITCH_SPEED_HIGH};
     Sensorless_Initialization(&sensorless_param);
     Sensorless_Set_SampleTime(&sys_time_cfg);
     Sensorless_Set_SpeedFilter(10.0F, SPEED_LOOP_FREQ);

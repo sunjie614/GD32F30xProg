@@ -3,13 +3,13 @@
 #include "foc.h"
 #include "hardware_interface.h"
 #include "justfloat.h"
+#include "leso.h"
 #include "reciprocal.h"
 #include "sensorless_interface.h"
 #include "transformation.h"
-#include "leso.h"
 
 static DeviceStateEnum_t MainInt_State        = RUNNING;
-static float             Data_Buffer[5]       = {0};
+static float             Data_Buffer[10]      = {0};
 static volatile bool     MainInt_UseRealTheta = true;
 //static volatile uint16_t MainInt_DataFlag     = 0x000U;
 
@@ -41,10 +41,14 @@ static inline void MainInt_Update_Angle_and_Speed(void) {
     AngleResult_t res       = {0};
     AngleResult_t est       = {0};
     AngleResult_t real      = {0};
+    AngleResult_t leso_res  = {0};
+    AngleResult_t hfi_res   = {0};
     float         speed_ref = Foc_Get_SpeedRamp();
 
-    real = Peripheral_Update_Position();
-    est  = Sensorless_Update_Position();
+    real     = Peripheral_Update_Position();
+    est      = Sensorless_Update_Position();
+    leso_res = Sensorless_Get_LesoResult();
+    hfi_res  = Sensorless_Get_HfiResult();
 
     Sensorless_Calculate_Err(real);
 
@@ -66,6 +70,11 @@ static inline void MainInt_Update_Angle_and_Speed(void) {
     Data_Buffer[2] = real.speed;
     Data_Buffer[3] = est.speed;
     Data_Buffer[4] = Sensorless_Get_Error().theta;
+    Data_Buffer[5] = Sensorless_Get_Error().speed;
+    Data_Buffer[6] = leso_res.theta;
+    Data_Buffer[7] = leso_res.speed;
+    Data_Buffer[8] = hfi_res.theta;
+    Data_Buffer[9] = hfi_res.speed;
 }
 
 static inline void MainInt_Initialization(void) {
@@ -89,14 +98,12 @@ static inline void MainInt_Startup(void) {
 static inline void MainInt_Update_Sensorless(void) {
     Clark_t voltage = {0};
     Park_t  ref     = {0};
-    Park_t induc = Foc_Get_Inductor();
+    Park_t  induc   = Foc_Get_Inductor();
     Leso_Set_Inductor(induc);
 
     voltage = Foc_Get_Uclark_Ref();
 
     Sensorless_Set_Voltage(voltage);
-
-
 
     Sensorless_Calculate();
 
@@ -114,7 +121,7 @@ static inline void MainInt_Run_Foc(void) {
 }
 
 static inline void MainInt_Send_Data(void) {
-    justfloat(Data_Buffer, 5);
+    justfloat(Data_Buffer, 10);
 }
 
 static inline void MainInt_Exit(void) {

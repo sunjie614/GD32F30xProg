@@ -157,8 +157,12 @@
 /*                        无位置运行参数配置                            */
 /*********************************************************************/
 /* 无位置传感器策略控制 */
-#define SENSORLESS_HYSTERESIS   50.0F  /* 无传感器滞环宽度：50rpm */
-#define SENSORLESS_SWITCH_SPEED 460.0F /* 无传感器切换速度：460rpm */
+#define SENSORLESS_HYSTERESIS   150.0F /* 无传感器滞环宽度：50rpm */
+#define SENSORLESS_SWITCH_SPEED 450.0F /* 无传感器切换速度：460rpm */
+#define SENSORLESS_SWITCH_SPEED_LOW \
+    410.0F /* 无传感器切换速度低限：400rpm */
+#define SENSORLESS_SWITCH_SPEED_HIGH \
+    490.0F                             /* 无传感器切换速度高限：500rpm */
 
 /* 无位置PLL跟踪器参数 */
 #define SENSORLESS_PLL_KP         50.0F  /* PLL比例系数 */
@@ -197,10 +201,10 @@
 #define LESO_WC_MIN  2000.0F /* 观测器带宽最小值 */
 
 /* LESO观测器PLL跟踪器参数 */
-#define SMO_PLL_KP             600.0F  /* PLL比例系数 */
-#define SMO_PLL_KI             90E3F   /* PLL积分系数 */
+#define SMO_PLL_KP             50.0F  /* PLL比例系数 */
+#define SMO_PLL_KI             625.0F   /* PLL积分系数 */
 #define SMO_PLL_KD             0.0F    /* PLL微分系数 */
-#define SMO_PLL_MAX_OUTPUT     4000.0F /* PLL最大输出 */
+#define SMO_PLL_MAX_OUTPUT     500.0F /* PLL最大输出 */
 #define SMO_PLL_MIN_OUTPUT     (-1 * SMO_PLL_MAX_OUTPUT) /* PLL最小输出 */
 #define SMO_PLL_INTEGRAL_LIMIT SMO_PLL_MAX_OUTPUT /* PLL积分限幅值 */
 

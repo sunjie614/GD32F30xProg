@@ -42,7 +42,7 @@ static Clark_t Leso_Current = {0};
 static Clark_t Leso_CurEst  = {0};
 static Clark_t Leso_EmfEst  = {0};
 
-static IIR1stFilter_t Leso_Speed_Filter = {0};
+static IIR2ndFilter_t Leso_Speed_Filter = {0};
 static PID_Handler_t  Leso_Theta_PID    = {0};
 
 /**
@@ -77,7 +77,7 @@ bool Leso_Initialization(const LESO_Param_t* param) {
     Leso_InvLd  = 1.0F / Leso_Ld;
     Leso_InvLq  = 1.0F / Leso_Lq;
 
-    Leso_Int_limit = 1E35F;  // 积分限幅值
+    Leso_Int_limit = 1E25F;  // 积分限幅值
 
     return true;
 }
@@ -99,7 +99,7 @@ void Leso_Set_Inductor(Park_t inductance) {
 }
 
 void Leso_Set_SpeedFilter(float cutoff_freq, float sample_freq) {
-    IIR1stFilter_Init(&Leso_Speed_Filter, cutoff_freq, sample_freq);
+    IIR2ndFilter_Init(&Leso_Speed_Filter, cutoff_freq, sample_freq);
 }
 
 void Leso_Set_Pid_Handler(PID_Handler_t config) {
@@ -239,7 +239,7 @@ void Leso_Update_EmfEstB(void) {
 static inline float pll_update(float error, bool reset) {
     // 更新锁相环
     float omega = Pid_Update(error, reset, &Leso_Theta_PID);
-    Leso_Theta += omega * Leso_SampleTime;
+    Leso_Theta += omega * Leso_SampleTime ;
     if (Leso_Theta > M_2PI) {
         Leso_Theta -= M_2PI;
     }
@@ -287,7 +287,7 @@ static inline float calculate_speed(float omega) {
         return Leso_Speed;
     }
     leso_count = 0x0000U;
-    speed      = IIR1stFilter_Update(&Leso_Speed_Filter, leso_integ);
+    speed      = IIR2ndFilter_Update(&Leso_Speed_Filter, leso_integ);
     leso_integ = 0.0F;
     return speed;
 }
