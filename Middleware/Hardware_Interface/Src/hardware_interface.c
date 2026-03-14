@@ -149,9 +149,9 @@ void Peripheral_Set_PWMChangePoint(Phase_t tcm)
     {
         Breke_Duty = 1-( voltage_bus - 620.0F )/80.0F;
     }
-    if (Breke_Duty < 0.0F)
+    if (Breke_Duty < 0.2F)
     {
-        Breke_Duty = 0.0F;
+        Breke_Duty = 0.2F;
     }
     if (Breke_Duty > 1.0F)
     {
