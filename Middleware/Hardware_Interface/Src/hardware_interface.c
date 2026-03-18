@@ -140,18 +140,18 @@ void Peripheral_DisableHardwareProtect(void)
 // recommended to operate register if possible //
 void Peripheral_Set_PWMChangePoint(Phase_t tcm)
 {
-    float voltage_bus    = Adc_Get_VoltageBus();
-    if(voltage_bus <650.0F)
+    float voltage_bus = Adc_Get_VoltageBus();
+    if (voltage_bus < 620.0F)
     {
         Breke_Duty = 1.0F;
     }
-    else 
+    else
     {
-        Breke_Duty = 1-( voltage_bus - 650.0F )/100.0F;
+        Breke_Duty = 1 - (voltage_bus - 620.0F) / 80.0F;
     }
-    if (Breke_Duty < 0.2F)
+    if (Breke_Duty < 0.1F)
     {
-        Breke_Duty = 0.2F;
+        Breke_Duty = 0.1F;
     }
     if (Breke_Duty > 1.0F)
     {

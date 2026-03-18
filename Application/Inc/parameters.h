@@ -89,7 +89,8 @@
 #ifdef ENCODER_POSITION
 #    define MOTOR_THETA_FACTOR \
         (M_2PI / (float)(MOTOR_POSITION_SCALE + 1))
-#    define MOTOR_POSITION_OFFSET 6838.0F  /* 位置传感器零点偏置/4260.0孚瑞肯电机 */
+#    define MOTOR_POSITION_OFFSET \
+        4260.0F /* 位置传感器零点偏置/6838.0学校/4260.0孚瑞肯电机 */
 #endif
 
 #define MOTOR_RESOLVER_PN 1.0F /* 旋变极对数 */
@@ -118,6 +119,16 @@
 #define PID_SPEED_LOOP_KP 0.016F /* 转速环比例系数 */
 #define PID_SPEED_LOOP_KI 0.060F /* 转速环积分系数 */
 #define PID_SPEED_LOOP_KD 0.00F  /* 转速环微分系数 */
+
+/* 转速环分段PI参数配置 */
+#define SPEED_PI_KP_MUL_MAX        5.0F   /* Kp最大放大倍数 */
+#define SPEED_PI_KP_UP_START_ERR   80.0F  /* Kp上升段起点误差 */
+#define SPEED_PI_KP_UP_END_ERR     130.0F /* Kp上升段终点误差 */
+#define SPEED_PI_KP_DOWN_START_ERR 90.0F  /* Kp回退段起点误差 */
+#define SPEED_PI_KP_DOWN_END_ERR   50.0F  /* Kp回退段终点误差 */
+#define SPEED_PI_KI_MUL_MAX        5.0F   /* Ki最大放大倍数 */
+#define SPEED_PI_KI_SWITCH_ERR     100.0F /* Ki切换误差阈值 */
+#define SPEED_PI_KI_CONFIRM_CYCLES 2U /* Ki切换确认次数（速度环周期） */
 
 /* 转速环输出限制 */
 #define PID_SPEED_LOOP_MAX_OUTPUT \

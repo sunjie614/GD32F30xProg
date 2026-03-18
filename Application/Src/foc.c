@@ -38,10 +38,50 @@ static PID_Handler_t   Foc_Pid_CurQ_Handler   = {0};
 static RampGenerator_t Foc_Ramp_Speed_Handler = {0};
 static SawtoothWave_t  Foc_Sawtooth_Handler   = {0};
 
-static PI_Tuner_t Foc_Pi_Tuner = {.Tune_Ratio     = 5.0F,
-                                  .Tune_Threshold = 100.0F,
-                                  .Hold_Cycles    = 0,
-                                  .Tuned          = false};
+typedef enum
+{
+    SPEED_PI_KP_LOW = 0,
+    SPEED_PI_KP_RAMP_UP,
+    SPEED_PI_KP_HIGH,
+    SPEED_PI_KP_RAMP_DOWN
+} SpeedPiKpState_t;
+
+typedef struct
+{
+    float            kp_mul;
+    float            ki_mul;
+    float            kp_mul_max;
+    float            ki_mul_max;
+    float            kp_up_start_err;
+    float            kp_up_end_err;
+    float            kp_down_start_err;
+    float            kp_down_end_err;
+    float            ki_switch_err;
+    uint16_t         ki_confirm_cycles;
+    uint16_t         ki_high_count;
+    uint16_t         ki_low_count;
+    bool             ki_boosted;
+    SpeedPiKpState_t kp_state;
+} SpeedPiScheduler_t;
+
+static float Foc_Speed_Kp_Base = PID_SPEED_LOOP_KP;
+static float Foc_Speed_Ki_Base = PID_SPEED_LOOP_KI;
+
+static SpeedPiScheduler_t Foc_SpeedPi
+    = {.kp_mul            = 1.0F,
+       .ki_mul            = 1.0F,
+       .kp_mul_max        = SPEED_PI_KP_MUL_MAX,
+       .ki_mul_max        = SPEED_PI_KI_MUL_MAX,
+       .kp_up_start_err   = SPEED_PI_KP_UP_START_ERR,
+       .kp_up_end_err     = SPEED_PI_KP_UP_END_ERR,
+       .kp_down_start_err = SPEED_PI_KP_DOWN_START_ERR,
+       .kp_down_end_err   = SPEED_PI_KP_DOWN_END_ERR,
+       .ki_switch_err     = SPEED_PI_KI_SWITCH_ERR,
+       .ki_confirm_cycles = SPEED_PI_KI_CONFIRM_CYCLES,
+       .ki_high_count     = 0U,
+       .ki_low_count      = 0U,
+       .ki_boosted        = false,
+       .kp_state          = SPEED_PI_KP_LOW};
 
 FluxExperiment_t Experiment = {0};
 
@@ -203,6 +243,15 @@ void Foc_Set_If_Param(IF_Parameter_t* if_param)
 void Foc_Set_Pid_Speed_Handler(PID_Handler_t* handler)
 {
     Foc_Pid_Speed_Handler = *handler;  // 设置速度环PID控制器
+    Foc_Speed_Kp_Base     = handler->Kp;
+    Foc_Speed_Ki_Base     = handler->Ki;
+
+    Foc_SpeedPi.kp_mul        = 1.0F;
+    Foc_SpeedPi.ki_mul        = 1.0F;
+    Foc_SpeedPi.kp_state      = SPEED_PI_KP_LOW;
+    Foc_SpeedPi.ki_boosted    = false;
+    Foc_SpeedPi.ki_high_count = 0U;
+    Foc_SpeedPi.ki_low_count  = 0U;
 }
 
 void Foc_Set_Pid_CurD_Handler(PID_Handler_t* handler)
@@ -413,6 +462,176 @@ static inline Park_t Foc_Update_CurrentLoop(Park_t ref,
     return output;
 }
 
+static inline float speed_pi_clampf(float value, float min, float max)
+{
+    if (value < min)
+    {
+        return min;
+    }
+    if (value > max)
+    {
+        return max;
+    }
+    return value;
+}
+
+static inline float speed_pi_get_kp_mul(float abs_err)
+{
+    float span = 0.0F;
+    float gain = 1.0F;
+    float t    = 0.0F;
+
+    switch (Foc_SpeedPi.kp_state)
+    {
+    case SPEED_PI_KP_HIGH:
+        return Foc_SpeedPi.kp_mul_max;
+    case SPEED_PI_KP_RAMP_UP:
+        span = Foc_SpeedPi.kp_up_end_err - Foc_SpeedPi.kp_up_start_err;
+        if (span <= 0.0F)
+        {
+            return Foc_SpeedPi.kp_mul_max;
+        }
+        t = (speed_pi_clampf(abs_err,
+                             Foc_SpeedPi.kp_up_start_err,
+                             Foc_SpeedPi.kp_up_end_err)
+             - Foc_SpeedPi.kp_up_start_err)
+            / span;
+        gain = 1.0F + t * (Foc_SpeedPi.kp_mul_max - 1.0F);
+        return gain;
+    case SPEED_PI_KP_RAMP_DOWN:
+        span = Foc_SpeedPi.kp_down_start_err
+               - Foc_SpeedPi.kp_down_end_err;
+        if (span <= 0.0F)
+        {
+            return 1.0F;
+        }
+        t = (speed_pi_clampf(abs_err,
+                             Foc_SpeedPi.kp_down_end_err,
+                             Foc_SpeedPi.kp_down_start_err)
+             - Foc_SpeedPi.kp_down_end_err)
+            / span;
+        gain = 1.0F + t * (Foc_SpeedPi.kp_mul_max - 1.0F);
+        return gain;
+    case SPEED_PI_KP_LOW:
+    default:
+        return 1.0F;
+    }
+}
+
+static inline uint16_t speed_pi_get_confirm_ticks(void)
+{
+    uint32_t ticks = (uint32_t)Foc_SpeedPi.ki_confirm_cycles;
+
+    if (Foc_Speed_Prescaler == 0U)
+    {
+        return (ticks == 0U) ? 1U : (uint16_t)ticks;
+    }
+
+    ticks *= (uint32_t)Foc_Speed_Prescaler;
+    if (ticks == 0U)
+    {
+        ticks = 1U;
+    }
+    if (ticks > UINT16_MAX)
+    {
+        ticks = UINT16_MAX;
+    }
+    return (uint16_t)ticks;
+}
+
+static inline void speed_pi_update_gain(float speed_err, bool reset)
+{
+    uint16_t confirm_ticks = 0U;
+    float    abs_speed_err = fabsf(speed_err);
+
+    if (reset)
+    {
+        Foc_SpeedPi.kp_mul        = 1.0F;
+        Foc_SpeedPi.ki_mul        = 1.0F;
+        Foc_SpeedPi.kp_state      = SPEED_PI_KP_LOW;
+        Foc_SpeedPi.ki_boosted    = false;
+        Foc_SpeedPi.ki_high_count = 0U;
+        Foc_SpeedPi.ki_low_count  = 0U;
+
+        Foc_Pid_Speed_Handler.Kp = Foc_Speed_Kp_Base;
+        Foc_Pid_Speed_Handler.Ki = Foc_Speed_Ki_Base;
+        return;
+    }
+
+    switch (Foc_SpeedPi.kp_state)
+    {
+    case SPEED_PI_KP_LOW:
+        if (abs_speed_err >= Foc_SpeedPi.kp_up_start_err)
+        {
+            Foc_SpeedPi.kp_state = SPEED_PI_KP_RAMP_UP;
+        }
+        break;
+    case SPEED_PI_KP_RAMP_UP:
+        if (abs_speed_err >= Foc_SpeedPi.kp_up_end_err)
+        {
+            Foc_SpeedPi.kp_state = SPEED_PI_KP_HIGH;
+        }
+        else if (abs_speed_err < Foc_SpeedPi.kp_up_start_err)
+        {
+            Foc_SpeedPi.kp_state = SPEED_PI_KP_LOW;
+        }
+        break;
+    case SPEED_PI_KP_HIGH:
+        if (abs_speed_err <= Foc_SpeedPi.kp_down_start_err)
+        {
+            Foc_SpeedPi.kp_state = SPEED_PI_KP_RAMP_DOWN;
+        }
+        break;
+    case SPEED_PI_KP_RAMP_DOWN:
+        if (abs_speed_err > Foc_SpeedPi.kp_down_start_err)
+        {
+            Foc_SpeedPi.kp_state = SPEED_PI_KP_HIGH;
+        }
+        else if (abs_speed_err <= Foc_SpeedPi.kp_down_end_err)
+        {
+            Foc_SpeedPi.kp_state = SPEED_PI_KP_LOW;
+        }
+        break;
+    default:
+        Foc_SpeedPi.kp_state = SPEED_PI_KP_LOW;
+        break;
+    }
+
+    Foc_SpeedPi.kp_mul = speed_pi_get_kp_mul(abs_speed_err);
+
+    confirm_ticks = speed_pi_get_confirm_ticks();
+    if (abs_speed_err > Foc_SpeedPi.ki_switch_err)
+    {
+        if (Foc_SpeedPi.ki_high_count < confirm_ticks)
+        {
+            Foc_SpeedPi.ki_high_count++;
+        }
+        Foc_SpeedPi.ki_low_count = 0U;
+        if (Foc_SpeedPi.ki_high_count >= confirm_ticks)
+        {
+            Foc_SpeedPi.ki_boosted = true;
+        }
+    }
+    else
+    {
+        if (Foc_SpeedPi.ki_low_count < confirm_ticks)
+        {
+            Foc_SpeedPi.ki_low_count++;
+        }
+        Foc_SpeedPi.ki_high_count = 0U;
+        if (Foc_SpeedPi.ki_low_count >= confirm_ticks)
+        {
+            Foc_SpeedPi.ki_boosted = false;
+        }
+    }
+
+    Foc_SpeedPi.ki_mul
+        = Foc_SpeedPi.ki_boosted ? Foc_SpeedPi.ki_mul_max : 1.0F;
+
+    Foc_Pid_Speed_Handler.Kp = Foc_Speed_Kp_Base * Foc_SpeedPi.kp_mul;
+    Foc_Pid_Speed_Handler.Ki = Foc_Speed_Ki_Base * Foc_SpeedPi.ki_mul;
+}
+
 static inline Park_t Foc_Update_VfMode(bool reset)
 {
     static bool  reset_prev = true;
@@ -505,13 +724,17 @@ static inline Park_t Foc_Update_IfMode(bool reset)
 
 static inline Park_t Foc_Update_SpeedMode(bool reset)
 {
+    float speed_err_abs = 0.0F;
+
     if (reset)
     {
         // 对Foc_Speed_Ref进行一次写入操作，防止变量被优化掉
         Foc_Speed_Ref = 0.0F;
     }
 
-    Foc_Idq_Fdbk = ParkTransform(Foc_Iclark_Fdbk, Foc_Theta);
+    Foc_Idq_Fdbk  = ParkTransform(Foc_Iclark_Fdbk, Foc_Theta);
+    speed_err_abs = fabsf(Foc_Speed_Ramp - Foc_Speed_Fdbk);
+    speed_pi_update_gain(speed_err_abs, reset);
 
     Park_t output = {0};
     // 更新转速环
@@ -519,31 +742,6 @@ static inline Park_t Foc_Update_SpeedMode(bool reset)
         = Foc_Update_SpeedLoop(Foc_Speed_Ref, Foc_Speed_Fdbk, reset);
 
     output = Foc_Update_CurrentLoop(Foc_Idq_Ref, Foc_Idq_Fdbk, reset);
-
-    if (Foc_Pi_Tuner.Hold_Cycles > 0)
-    {
-        Foc_Pi_Tuner.Hold_Cycles--;
-    }
-    else if (!Foc_Pi_Tuner.Tuned
-             && fabsf(Foc_Speed_Fdbk - Foc_Speed_Ramp)
-                    > Foc_Pi_Tuner.Tune_Threshold
-             && fabsf(Foc_Speed_Ramp) > 700.0f)
-    {
-        Foc_Pid_Speed_Handler.Kp *= Foc_Pi_Tuner.Tune_Ratio;
-        Foc_Pid_Speed_Handler.Ki *= Foc_Pi_Tuner.Tune_Ratio;
-        Foc_Pi_Tuner.Tuned = true;
-    }
-
-    if (Foc_Pi_Tuner.Tuned
-        && fabsf(Foc_Speed_Fdbk - Foc_Speed_Ramp)
-               < Foc_Pi_Tuner.Tune_Threshold)
-    {
-        Foc_Pid_Speed_Handler.Kp /= Foc_Pi_Tuner.Tune_Ratio;
-        Foc_Pid_Speed_Handler.Ki /= Foc_Pi_Tuner.Tune_Ratio;
-
-        Foc_Pi_Tuner.Tuned       = false;
-        Foc_Pi_Tuner.Hold_Cycles = 100;
-    }
 
     // 更新电流环
     if (output.q > PID_CURRENT_Q_LOOP_MAX_OUTPUT)
@@ -555,7 +753,6 @@ static inline Park_t Foc_Update_SpeedMode(bool reset)
         output.q = -PID_CURRENT_Q_LOOP_MAX_OUTPUT;
     }
 
-    Buffer_Put(Foc_Idq_Fdbk.q, 9);
     return output;
 }
 

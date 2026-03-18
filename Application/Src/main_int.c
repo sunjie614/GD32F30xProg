@@ -16,6 +16,7 @@ static inline void MainInt_Update_FocCurrent(void)
 {
     Phase_t current_phase = Peripheral_Get_PhaseCurrent();
     Clark_t current_clark = {0};
+    Buffer_Put(current_phase.a, 9);
 
     current_clark = ClarkeTransform(current_phase);
     current_clark = Sensorless_FilterCurrent(current_clark);
@@ -74,8 +75,6 @@ static inline void MainInt_Update_Angle_and_Speed(void)
     Buffer_Put(real.speed, 2);
     Buffer_Put(est.speed, 3);
     Buffer_Put(Sensorless_Get_Error().theta, 4);
-    
-
 }
 
 static inline void MainInt_Initialization(void)
