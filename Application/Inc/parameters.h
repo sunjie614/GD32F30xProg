@@ -227,7 +227,7 @@
 /*                        Buffer参数配置                            */
 /*********************************************************************/
 #define SENSORLESS_STARTUP_UD        5.0F /* 启动准备阶段d轴电压 */
-#define SENSORLESS_STARTUP_HOLD_TIME 0.1F /* 启动准备保持时间(s) */
+#define SENSORLESS_STARTUP_HOLD_TIME 0.15F /* 启动准备保持时间(s) */
 
 #define BUFFER_CAPACITY  18U /* 默认缓冲区容量 */
 #define BUFFER_PRESCALER 1U  /* 默认缓冲区预分频器 */
