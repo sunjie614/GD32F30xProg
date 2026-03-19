@@ -32,11 +32,12 @@ typedef struct
     bool   use_sensor;  // 是否使用传感器
 } IF_Parameter_t;
 
-typedef struct{
-    float Tune_Ratio;
-    float Tune_Threshold;
+typedef struct
+{
+    float    Tune_Ratio;
+    float    Tune_Threshold;
     uint16_t Hold_Cycles;
-    bool Tuned;
+    bool     Tuned;
 } PI_Tuner_t;
 
 void      Foc_Set_SampleTime(const SystemTimeConfig_t* config);
@@ -50,6 +51,7 @@ Park_t    Foc_Get_Inductor(void);
 void      Foc_Set_BusVoltageInv(float voltage);
 void      Foc_Set_Angle(float angle);
 void      Foc_Set_Speed(float speed);
+void      Foc_Request_StartupPrepare(void);
 float     Foc_Get_SpeedRamp(void);
 float     Foc_Get_SpeedTarget(void);
 void      Foc_Set_Speed_and_Angle(AngleResult_t* angle_speed);

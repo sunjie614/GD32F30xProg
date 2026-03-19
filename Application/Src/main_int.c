@@ -22,6 +22,9 @@ static inline void MainInt_Update_FocCurrent(void)
     current_clark = Sensorless_FilterCurrent(current_clark);
     Sensorless_Set_Current(current_clark);
     Foc_Set_Iclark_Fdbk(current_clark);
+    Park_t I_dq = Foc_Get_Idq_Fdbk();  // 更新Park变换后的电流反馈
+    Buffer_Put(I_dq.d, 16);
+    Buffer_Put(I_dq.q, 17);
 }
 
 static inline void MainInt_Check_ProtectFlag(void)
@@ -124,7 +127,7 @@ static inline void MainInt_Run_Foc(void)
     Park_t vol_dq_ref = {0};
 
     vol_dq_ref = Foc_Update_Main();
-
+    Buffer_Put(vol_dq_ref.d, 15);
     Foc_Set_Udq_Ref(vol_dq_ref);
 }
 

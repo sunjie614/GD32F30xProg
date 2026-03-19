@@ -24,6 +24,7 @@ static float         Foc_BusVoltage      = 0.0F;
 static float         Foc_BusVoltage_Inv  = 0.0F;
 static float         Foc_Speed_Ramp      = 0.0F;  // 实际指令转速
 static volatile bool Foc_Sweep           = true;  // FOC扫频标志
+static volatile bool Foc_StartupPrepareRequest = false;
 
 static VF_Parameter_t  Foc_VfParam            = {0};
 static IF_Parameter_t  Foc_IfParam            = {0};
@@ -159,6 +160,11 @@ void Foc_Set_BusVoltageInv(float voltage)
 void Foc_Set_Speed(float speed)
 {
     Foc_Speed_Fdbk = speed;  // 设置参考速度
+}
+
+void Foc_Request_StartupPrepare(void)
+{
+    Foc_StartupPrepareRequest = true;
 }
 
 float Foc_Get_SpeedRamp(void)
@@ -422,6 +428,18 @@ static inline Park_t Foc_Update_SpeedLoop(float ref,
                                           bool  reset)
 {
     static uint16_t counter = 0x0000U;
+    if (reset)
+    {
+        counter                        = 0x0000U;
+        Foc_Ramp_Speed_Handler.value  = 0.0F;
+        Foc_Ramp_Speed_Handler.target = 0.0F;
+        Foc_Speed_Ramp                = 0.0F;
+        Foc_Idq_Ref.d                 = 0.0F;
+        Foc_Idq_Ref.q                 = 0.0F;
+        Pid_Update(0.0F, true, &Foc_Pid_Speed_Handler);
+        return Foc_Idq_Ref;
+    }
+
     counter++;
     if (counter < Foc_Speed_Prescaler)
     {
@@ -445,6 +463,20 @@ static inline Park_t Foc_Update_SpeedLoop(float ref,
     output.d = dispatch_current(output.q);
 
     return output;  // 返回DQ轴电流参考
+}
+
+static inline uint16_t Foc_Get_StartupHoldCycles(void)
+{
+    float cycles = SENSORLESS_STARTUP_HOLD_TIME * Foc_Current_Freq;
+    if (cycles < 1.0F)
+    {
+        cycles = 1.0F;
+    }
+    if (cycles > (float)UINT16_MAX)
+    {
+        cycles = (float)UINT16_MAX;
+    }
+    return (uint16_t)(cycles + 0.5F);
 }
 
 static inline Park_t Foc_Update_CurrentLoop(Park_t ref,
@@ -545,6 +577,20 @@ static inline void speed_pi_update_gain(float speed_err, bool reset)
     float    abs_speed_err = fabsf(speed_err);
 
     if (reset)
+    {
+        Foc_SpeedPi.kp_mul        = 1.0F;
+        Foc_SpeedPi.ki_mul        = 1.0F;
+        Foc_SpeedPi.kp_state      = SPEED_PI_KP_LOW;
+        Foc_SpeedPi.ki_boosted    = false;
+        Foc_SpeedPi.ki_high_count = 0U;
+        Foc_SpeedPi.ki_low_count  = 0U;
+
+        Foc_Pid_Speed_Handler.Kp = Foc_Speed_Kp_Base;
+        Foc_Pid_Speed_Handler.Ki = Foc_Speed_Ki_Base;
+        return;
+    }
+
+    if (fabsf(Foc_Speed_Ref) <= SPEED_PI_ENABLE_REF_MIN)
     {
         Foc_SpeedPi.kp_mul        = 1.0F;
         Foc_SpeedPi.ki_mul        = 1.0F;
@@ -724,26 +770,61 @@ static inline Park_t Foc_Update_IfMode(bool reset)
 
 static inline Park_t Foc_Update_SpeedMode(bool reset)
 {
-    float speed_err_abs = 0.0F;
+    static bool     reset_prev     = true;
+    static bool     startup_active = false;
+    static uint16_t startup_count  = 0x0000U;
+    float           speed_err_abs  = 0.0F;
+    Park_t          output         = {0};
+
+    if (Foc_StartupPrepareRequest)
+    {
+        startup_active            = true;
+        startup_count             = 0x0000U;
+        Foc_StartupPrepareRequest = false;
+    }
+
+    if (reset_prev && !reset)
+    {
+        startup_active = true;
+        startup_count  = 0x0000U;
+    }
 
     if (reset)
     {
-        // 对Foc_Speed_Ref进行一次写入操作，防止变量被优化掉
-        Foc_Speed_Ref = 0.0F;
+        Foc_Speed_Ref  = 0.0F;
+        startup_active = false;
+        startup_count  = 0x0000U;
+        Foc_StartupPrepareRequest = false;
     }
 
-    Foc_Idq_Fdbk  = ParkTransform(Foc_Iclark_Fdbk, Foc_Theta);
+    Foc_Idq_Fdbk = ParkTransform(Foc_Iclark_Fdbk, Foc_Theta);
+
+    if (startup_active)
+    {
+        speed_pi_update_gain(0.0F, true);
+        (void)Foc_Update_SpeedLoop(0.0F, Foc_Speed_Fdbk, true);
+
+        output.d = SENSORLESS_STARTUP_UD;
+        output.q = 0.0F;
+
+        startup_count++;
+        if (startup_count >= Foc_Get_StartupHoldCycles())
+        {
+            startup_active = false;
+        }
+
+        reset_prev = reset;
+        return output;
+    }
+
     speed_err_abs = fabsf(Foc_Speed_Ramp - Foc_Speed_Fdbk);
     speed_pi_update_gain(speed_err_abs, reset);
 
-    Park_t output = {0};
-    // 更新转速环
     Foc_Idq_Ref
         = Foc_Update_SpeedLoop(Foc_Speed_Ref, Foc_Speed_Fdbk, reset);
 
     output = Foc_Update_CurrentLoop(Foc_Idq_Ref, Foc_Idq_Fdbk, reset);
 
-    // 更新电流环
     if (output.q > PID_CURRENT_Q_LOOP_MAX_OUTPUT)
     {
         output.q = PID_CURRENT_Q_LOOP_MAX_OUTPUT;
@@ -753,6 +834,7 @@ static inline Park_t Foc_Update_SpeedMode(bool reset)
         output.q = -PID_CURRENT_Q_LOOP_MAX_OUTPUT;
     }
 
+    reset_prev = reset;
     return output;
 }
 
@@ -774,7 +856,7 @@ Park_t Foc_Update_Main(void)
     }
     case STARTUP:
     {
-        output.d = 5.0F;  // D轴电压参考为5
+        output.d = SENSORLESS_STARTUP_UD;  // D轴电压参考为5
         output.q = 0.0F;  // Q轴电压参考为0
         break;
     }

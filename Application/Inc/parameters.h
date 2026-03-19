@@ -90,7 +90,7 @@
 #    define MOTOR_THETA_FACTOR \
         (M_2PI / (float)(MOTOR_POSITION_SCALE + 1))
 #    define MOTOR_POSITION_OFFSET \
-        4260.0F /* 位置传感器零点偏置/6838.0学校/4260.0孚瑞肯电机 */
+        5112.0F /* 位置传感器零点偏置/6838.0学校/5112.0孚瑞肯电机 */
 #endif
 
 #define MOTOR_RESOLVER_PN 1.0F /* 旋变极对数 */
@@ -99,8 +99,8 @@
 /*                        保护参数配置                                 */
 /*********************************************************************/
 /* 电压保护参数 */
-#define PROTECT_VOLTAGE_RATE        560.0F /* 额定电压：560V */
-#define PROTECT_VOLTAGE_FLUCTUATION 160.0F /* 允许电压波动：±60V */
+#define PROTECT_VOLTAGE_RATE        580.0F /* 额定电压：560V */
+#define PROTECT_VOLTAGE_FLUCTUATION 140.0F /* 允许电压波动：±60V */
 
 /* 电流和温度保护参数 */
 #define PROTECT_CURRENT_MAX 30.0F /* 最大电流限制：30A */
@@ -110,7 +110,7 @@
 /*                        FOC控制参数配置                              */
 /*********************************************************************/
 /* 转速斜坡控制参数 */
-#define RAMP_SPEED_SLOPE     200.0F   /* 速度变化率限制：100 rpm/s */
+#define RAMP_SPEED_SLOPE     250.0F   /* 速度变化率限制：100 rpm/s */
 #define RAMP_SPEED_LIMIT_MAX 1800.0F  /* 最大转速限制：1800 rpm */
 #define RAMP_SPEED_LIMIT_MIN -1800.0F /* 最小转速限制：-1800 rpm */
 #define RAMP_SPEED_TIME      (SPEED_LOOP_TIME) /* 转速环采样周期 */
@@ -125,11 +125,12 @@
 #define SPEED_PI_KP_UP_START_ERR   80.0F  /* Kp上升段起点误差 */
 #define SPEED_PI_KP_UP_END_ERR     130.0F /* Kp上升段终点误差 */
 #define SPEED_PI_KP_DOWN_START_ERR 90.0F  /* Kp回退段起点误差 */
-#define SPEED_PI_KP_DOWN_END_ERR   50.0F  /* Kp回退段终点误差 */
+#define SPEED_PI_KP_DOWN_END_ERR   40.0F  /* Kp回退段终点误差 */
 #define SPEED_PI_KI_MUL_MAX        5.0F   /* Ki最大放大倍数 */
-#define SPEED_PI_KI_SWITCH_ERR     100.0F /* Ki切换误差阈值 */
+#define SPEED_PI_KI_SWITCH_ERR     90.0F  /* Ki切换误差阈值 */
 #define SPEED_PI_KI_CONFIRM_CYCLES 2U /* Ki切换确认次数（速度环周期） */
-
+#define SPEED_PI_ENABLE_REF_MIN \
+    700.0F /* 目标转速超过该值才启用分段PI */
 /* 转速环输出限制 */
 #define PID_SPEED_LOOP_MAX_OUTPUT \
     (0.8F * PROTECT_CURRENT_MAX) /* q轴最大电流限制 */
@@ -225,7 +226,10 @@
 /*********************************************************************/
 /*                        Buffer参数配置                            */
 /*********************************************************************/
-#define BUFFER_CAPACITY  10U /* 默认缓冲区容量 */
+#define SENSORLESS_STARTUP_UD        5.0F /* 启动准备阶段d轴电压 */
+#define SENSORLESS_STARTUP_HOLD_TIME 0.1F /* 启动准备保持时间(s) */
+
+#define BUFFER_CAPACITY  18U /* 默认缓冲区容量 */
 #define BUFFER_PRESCALER 1U  /* 默认缓冲区预分频器 */
 
 #endif
