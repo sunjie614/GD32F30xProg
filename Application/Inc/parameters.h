@@ -90,7 +90,7 @@
 #    define MOTOR_THETA_FACTOR \
         (M_2PI / (float)(MOTOR_POSITION_SCALE + 1))
 #    define MOTOR_POSITION_OFFSET \
-        5112.0F /* 位置传感器零点偏置/6838.0学校/5112.0孚瑞肯电机 */
+        6838.0F /* 位置传感器零点偏置/6838.0学校/5112.0孚瑞肯电机 */
 #endif
 
 #define MOTOR_RESOLVER_PN 1.0F /* 旋变极对数 */

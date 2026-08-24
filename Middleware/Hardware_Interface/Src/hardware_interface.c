@@ -141,13 +141,13 @@ void Peripheral_DisableHardwareProtect(void)
 void Peripheral_Set_PWMChangePoint(Phase_t tcm)
 {
     float voltage_bus = Adc_Get_VoltageBus();
-    if (voltage_bus < 620.0F)
+    if (voltage_bus < 630.0F)
     {
         Breke_Duty = 1.0F;
     }
     else
     {
-        Breke_Duty = 1 - (voltage_bus - 620.0F) / 80.0F;
+        Breke_Duty = 1 - (voltage_bus - 630.0F) / 80.0F;
     }
     if (Breke_Duty < 0.1F)
     {
