@@ -45,21 +45,21 @@
 /* 主定时器配置 */
 #define MAIN_INT_TIMER_PRESCALER 0 /* 预分频器：不分频 */
 #define MAIN_INT_TIMER_PERIOD \
-    12000 /* 周期值：12000 (10kHz = 120MHz/12000/2) */
+    12000 /* 中心对齐周期：12000，PWM/主控制频率为5kHz */
 #define MAIN_INT_TIMER_DEADTIME_PERIOD \
     2000 /* 死区时间：2us (2us = 120MHz/12000/2*2000) */
 
 /* 主循环(电流环)频率配置 */
 #define MAIN_LOOP_FREQ                                 \
     (MCU_MAIN_FREQ / (MAIN_INT_TIMER_PRESCALER + 1.0F) \
-     / MAIN_INT_TIMER_PERIOD / 2)              /* 10kHz */
-#define MAIN_LOOP_TIME (1.0F / MAIN_LOOP_FREQ) /* 100us */
+     / MAIN_INT_TIMER_PERIOD / 2)              /* 5kHz */
+#define MAIN_LOOP_TIME (1.0F / MAIN_LOOP_FREQ) /* 200us */
 
 /* 转速环频率配置 */
 #define SPEED_LOOP_PRESCALER 10.0F /* 转速环分频系数 */
 #define SPEED_LOOP_FREQ \
-    (MAIN_LOOP_FREQ / SPEED_LOOP_PRESCALER)      /* 1kHz */
-#define SPEED_LOOP_TIME (1.0F / SPEED_LOOP_FREQ) /* 1ms */
+    (MAIN_LOOP_FREQ / SPEED_LOOP_PRESCALER)      /* 500Hz */
+#define SPEED_LOOP_TIME (1.0F / SPEED_LOOP_FREQ) /* 2ms */
 
 /*********************************************************************/
 /*                        电机物理参数                                 */

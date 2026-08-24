@@ -4,11 +4,15 @@
 
 # 创建中间件接口静态库
 # 包含通信接口、硬件接口和无传感器接口的实现源码
-add_library(Middleware_Interface STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/Communication_Interface/Src/com_interface.c # 通信接口实现
-    ${CMAKE_CURRENT_SOURCE_DIR}/Hardware_Interface/Src/hardware_interface.c # 硬件接口实现
-    ${CMAKE_CURRENT_SOURCE_DIR}/Sensorless_Interface/Src/sensorless_interface.c # 无传感器接口实现
+set(MIDDLEWARE_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Communication_Interface/Src/com_interface.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Hardware_Interface/Src/hardware_interface.c
 )
+if(NOT NUMERIC_BACKEND STREQUAL "IQMATH")
+    list(APPEND MIDDLEWARE_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/Sensorless_Interface/Src/sensorless_interface.c)
+endif()
+add_library(Middleware_Interface STATIC ${MIDDLEWARE_SOURCES})
 
 # 设置中间件接口库的公共头文件包含目录
 # 使依赖该库的目标能够访问相关头文件

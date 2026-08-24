@@ -1,6 +1,7 @@
 #include "hardware_interface.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 #include "adc.h"
 #include "can.h"
 #include "gpio.h"

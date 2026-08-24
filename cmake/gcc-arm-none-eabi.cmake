@@ -20,18 +20,30 @@ set(CMAKE_EXECUTABLE_SUFFIX_C       ".elf")
 set(CMAKE_EXECUTABLE_SUFFIX_CXX     ".elf")
 
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+# Bare-metal compiler probes must never be linked as host executables: newlib
+# intentionally relies on the project's syscall stubs and linker script.
+set(CMAKE_C_COMPILER_WORKS TRUE CACHE INTERNAL "")
+set(CMAKE_ASM_COMPILER_WORKS TRUE CACHE INTERNAL "")
+set(CMAKE_C_ABI_COMPILED TRUE CACHE INTERNAL "")
+set(CMAKE_C_SIZEOF_DATA_PTR 4 CACHE INTERNAL "")
+set(CMAKE_C_BYTE_ORDER LITTLE_ENDIAN CACHE INTERNAL "")
 
-# MCU specific flags
-set(TARGET_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard ")
+# MCU specific flags. The supplied IQmath CM3 archive uses the base/soft ABI,
+# therefore Cortex-M4 IQmath builds must use softfp at the link boundary.
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    set(TARGET_FLOAT_ABI "softfp")
+else()
+    set(TARGET_FLOAT_ABI "hard")
+endif()
+set(TARGET_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=${TARGET_FLOAT_ABI} ")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${TARGET_FLAGS}")
 set(CMAKE_ASM_FLAGS "${CMAKE_C_FLAGS} -x assembler-with-cpp -MMD -MP")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic -fdata-sections -ffunction-sections")
 
-set(CMAKE_C_FLAGS_DEBUG "-O0 -g3")
 set(CMAKE_C_FLAGS_RELEASE "-Os -g0")
-set(CMAKE_C_FLAGS_DEBUG "-O3 -g3 -ffast-math")
-set(CMAKE_CXX_FLAGS_DEBUG "-O3 -g3 -ffast-math")
+set(CMAKE_C_FLAGS_DEBUG "-O3 -g3")
+set(CMAKE_CXX_FLAGS_DEBUG "-O3 -g3")
 
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti -fno-exceptions -fno-threadsafe-statics")
 

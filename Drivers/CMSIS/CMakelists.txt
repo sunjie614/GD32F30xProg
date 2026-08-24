@@ -1,4 +1,5 @@
 #
+if(NOT NUMERIC_BACKEND STREQUAL "IQMATH")
 add_library(CMSISDSP STATIC
 
     # 快速数学函数
@@ -15,6 +16,7 @@ target_include_directories(CMSISDSP PUBLIC
     ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/CMSIS-DSP/Include # CMSIS-DSP 头文件
     ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Core/Include # CMSIS 核心头文件
 )
+endif()
 
 set(CORE_SOURCES
     GD/GD32F30x/Source/system_gd32f30x.c
@@ -32,7 +34,11 @@ target_include_directories(CMSIS_Core PUBLIC
 
 # 生成 CMSIS，link CMSISDSP 和 Core
 add_library(CMSIS INTERFACE)
-target_link_libraries(CMSIS INTERFACE CMSISDSP CMSIS_Core)
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    target_link_libraries(CMSIS INTERFACE CMSIS_Core)
+else()
+    target_link_libraries(CMSIS INTERFACE CMSISDSP CMSIS_Core)
+endif()
 
 target_include_directories(CMSIS INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Include

@@ -2,13 +2,21 @@
 # 实用工具库，包含滤波器等常用算法实现
 
 # 添加源文件
-set(Utils_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/filter.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/pid.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/pll.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/signal.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/buffer.c
-)
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    set(Utils_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/mc_math.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/buffer.c
+    )
+else()
+    set(Utils_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/mc_math.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/filter.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/pid.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/pll.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/signal.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/buffer.c
+    )
+endif()
 
 add_library(Utils STATIC
     ${Utils_SOURCES}

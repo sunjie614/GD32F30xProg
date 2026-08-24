@@ -10,4 +10,7 @@
 *.vsix
 
 /build
+/build-float-ref
+/build-iqmath-softfp
+/build-iqmath-verify
 /.cache

@@ -5,6 +5,15 @@ add_subdirectory(GD32F30x_standard_peripheral)
 # 创建一个 INTERFACE 层
 add_library(Drivers INTERFACE)
 
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    add_library(IQmathLib STATIC IMPORTED GLOBAL)
+    set_target_properties(IQmathLib PROPERTIES
+        IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/IQmath/Lib/IQmathLib-cm3.lib"
+        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/IQmath/Include"
+    )
+    target_link_libraries(Drivers INTERFACE IQmathLib)
+endif()
+
 # 链接 CMSIS 和 GD32F30x_standard_peripheral 到 Drivers
 target_link_libraries(Drivers INTERFACE 
     INTERFACE CMSIS 

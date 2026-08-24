@@ -10,8 +10,14 @@ bool pin = false;
 */
 int main(void)
 {
+#if defined(MC_NUMERIC_IQMATH)
+    /* Initialize all fixed-point state before enabling the ADC interrupt. */
+    Initialization_MTPA();
+    Initialization_Drivers();
+#else
     Initialization_Drivers();
     Initialization_MTPA();
+#endif
     while (1)
     {
         COM_CANProtocol();

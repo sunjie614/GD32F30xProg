@@ -45,7 +45,11 @@
 #    define ARM_DSP
 #endif
 
-#ifdef ARM_DSP
+#if defined(MC_NUMERIC_IQMATH)
+#    include <math.h>
+#    define COS(x) cosf(x)
+#    define SIN(x) sinf(x)
+#elif defined(ARM_DSP)
 #    include "arm_math.h" /* CMSIS-DSP math */  // IWYU pragma: export
 
 #    define COS(x) arm_cos_f32(x)

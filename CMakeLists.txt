@@ -5,6 +5,15 @@
 
 cmake_minimum_required(VERSION 3.22)
 
+# Numeric backend. IQMATH is the production/default path; FLOAT_REF keeps the
+# original floating-point implementation available for regression comparison.
+set(NUMERIC_BACKEND "IQMATH" CACHE STRING "Numeric backend: IQMATH or FLOAT_REF")
+set_property(CACHE NUMERIC_BACKEND PROPERTY STRINGS IQMATH FLOAT_REF)
+if(NOT NUMERIC_BACKEND STREQUAL "IQMATH" AND
+   NOT NUMERIC_BACKEND STREQUAL "FLOAT_REF")
+    message(FATAL_ERROR "NUMERIC_BACKEND must be IQMATH or FLOAT_REF")
+endif()
+
 # ==============================================================================
 # 编译器和构建设置
 # ==============================================================================
@@ -42,21 +51,36 @@ set(CMAKE_PROJECT_NAME ${PROJECT_FOLDER_NAME})
 include("cmake/gcc-arm-none-eabi.cmake")
 
 # 声明项目
-project(${CMAKE_PROJECT_NAME})
+project(${CMAKE_PROJECT_NAME} LANGUAGES C ASM)
 
 # 启用 C 和汇编语言支持
 enable_language(C ASM)
+
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    add_compile_definitions(MC_NUMERIC_IQMATH=1 GLOBAL_Q=24 MATH_TYPE=IQ_MATH)
+else()
+    add_compile_definitions(MC_NUMERIC_FLOAT_REF=1)
+endif()
+
+message(STATUS "Motor-control numeric backend: ${NUMERIC_BACKEND}")
 
 # ==============================================================================
 # 主可执行目标配置
 # ==============================================================================
 
 # 创建主可执行文件目标
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    set(MAIN_INTERRUPT_SOURCE
+        ${CMAKE_SOURCE_DIR}/Application/Src/main_int_iq.c)
+else()
+    set(MAIN_INTERRUPT_SOURCE
+        ${CMAKE_SOURCE_DIR}/Application/Src/main_int.c)
+endif()
+
 add_executable(${PROJECT_NAME}
     ${CMAKE_SOURCE_DIR}/Application/Src/main.c
-    ${CMAKE_SOURCE_DIR}/Application/Src/main_int.c
+    ${MAIN_INTERRUPT_SOURCE}
     ${CMAKE_SOURCE_DIR}/Application/Src/gd32f30x_it.c
-    ${CMAKE_SOURCE_DIR}/Application/Src/foc.c
 )
 
 # 为主目标添加预处理器定义

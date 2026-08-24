@@ -1,15 +1,21 @@
 #
-set(User_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/main.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/main_int.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/motor.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/protect.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/gd32f30x_it.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/initialization.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/foc.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/identification.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/Src/MTPA.c
-)
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    set(User_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/fixed_control.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/initialization_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/motor_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/protect_iq.c
+    )
+else()
+    set(User_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/motor.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/protect.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/initialization.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/foc.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/identification.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/MTPA.c
+    )
+endif()
 
 add_library(User STATIC
     ${User_SOURCES}
