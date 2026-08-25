@@ -1,0 +1,10 @@
+power off
+device GD32F303VCT6
+if SWD
+speed 50000
+r
+halt
+loadfile build-iqmath-softfp/GD32F30xProg1230.elf
+r
+go
+exit
