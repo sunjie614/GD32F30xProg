@@ -61,10 +61,30 @@ foreach ($command in $linkCommands) {
 Pop-Location
 
 if ($Backend -eq 'IQMATH') {
-    $object = Join-Path $build 'Application/CMakeFiles/User.dir/Src/fixed_control.c.obj'
-    & (Join-Path $PSScriptRoot 'CheckFixedPointObjects.ps1') -ObjectFile $object
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Fixed-point object audit failed.'
+    $algorithmObjects = @(
+        'Application/CMakeFiles/User.dir/Src/foc_iq.c.obj',
+        'Application/CMakeFiles/User.dir/Src/identification_iq.c.obj',
+        'Application/CMakeFiles/User.dir/Src/mtpa_iq.c.obj',
+        'Application/CMakeFiles/User.dir/Src/motor_iq_core.c.obj',
+        'Application/CMakeFiles/User.dir/Src/protect_iq_core.c.obj',
+        'Utils/CMakeFiles/Utils.dir/Src/filter_iq.c.obj',
+        'Utils/CMakeFiles/Utils.dir/Src/pid_iq.c.obj',
+        'Utils/CMakeFiles/Utils.dir/Src/pll_iq.c.obj',
+        'Utils/CMakeFiles/Utils.dir/Src/signal_iq.c.obj',
+        'Utils/CMakeFiles/Utils.dir/Src/transformation_iq.c.obj',
+        'Sensorless/CMakeFiles/Sensorless.dir/Src/leso_iq.c.obj',
+        'Sensorless/CMakeFiles/Sensorless.dir/Src/hf_injection_iq.c.obj',
+        'Sensorless/CMakeFiles/Sensorless.dir/Src/flying_iq.c.obj'
+    )
+    foreach ($relativeObject in $algorithmObjects) {
+        $object = Join-Path $build $relativeObject
+        if (-not (Test-Path -LiteralPath $object)) {
+            throw "Fixed-point audit object is missing: $relativeObject"
+        }
+        & (Join-Path $PSScriptRoot 'CheckFixedPointObjects.ps1') -ObjectFile $object
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fixed-point object audit failed: $relativeObject"
+        }
     }
 }
 

@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "foc_iq.h"
 #include "transformation.h"
 
 #ifdef __cplusplus
@@ -35,13 +36,23 @@ typedef struct
     uint32_t sqrt_failures;
 } FixedControlSelfTest_t;
 
-void FixedControl_Init(void);
-void FixedControl_Reset(void);
-FixedControlOutput_t FixedControl_Step(const FixedControlInput_t* input);
+typedef struct
+{
+    FocIqState_t foc;
+    FocIqParameters_t parameters;
+    bool initialized;
+} FixedControlState_t;
+
+void FixedControl_Init(FixedControlState_t* state);
+void FixedControl_Reset(FixedControlState_t* state);
+FixedControlOutput_t FixedControl_Step(FixedControlState_t* state,
+                                      const FixedControlInput_t* input);
+bool FixedControl_BackgroundBuild(FixedControlState_t* state);
+void FixedControl_CommitBackground(FixedControlState_t* state);
 FixedControlSelfTest_t FixedControl_RunSelfTest(void);
 
 /* A2L-compatible physical-unit gateway variables. */
-extern volatile uint16_t Foc_Mode;
+extern volatile FocMode_t Foc_Mode;
 extern volatile float Foc_Speed_Ref;
 extern volatile float Foc_Speed_Ramp;
 extern volatile float Foc_Speed_Fdbk;

@@ -1,3 +1,5 @@
+/* LEGACY IQMATH PROTOTYPE - not part of the current IQMATH target.
+ * See protect_iq_core.c and protect_iq_gateway.c. */
 #include "protect.h"
 
 #include <stddef.h>

@@ -1,5 +1,7 @@
 #include "mc_math.h"
 
+#include <math.h>
+
 McMathDiagnostics_t McMath_Diagnostics = {0};
 
 void McMath_ResetDiagnostics(void)
@@ -12,6 +14,11 @@ void McMath_ResetDiagnostics(void)
 mc_real_t McMath_FromFloat(float value)
 {
 #if defined(MC_NUMERIC_IQMATH)
+    if (!isfinite(value))
+    {
+        McMath_Diagnostics.invalid_input_count++;
+        return MC_ZERO;
+    }
     if (value >= 127.99999994F)
     {
         McMath_Diagnostics.saturation_count++;
@@ -22,7 +29,8 @@ mc_real_t McMath_FromFloat(float value)
         McMath_Diagnostics.saturation_count++;
         return (mc_real_t)INT32_MIN;
     }
-    return _IQ24(value);
+    float scaled = value * 16777216.0F;
+    return (mc_real_t)(scaled >= 0.0F ? scaled + 0.5F : scaled - 0.5F);
 #else
     return value;
 #endif

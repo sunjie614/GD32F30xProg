@@ -5,6 +5,11 @@
 if(NUMERIC_BACKEND STREQUAL "IQMATH")
     set(Utils_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/mc_math.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/filter_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/pid_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/pll_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/signal_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/transformation_iq.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/buffer.c
     )
 else()
@@ -39,3 +44,6 @@ target_compile_options(Utils PRIVATE
     -Wextra
     -O2
 )
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    target_compile_options(Utils PRIVATE -fstack-usage)
+endif()

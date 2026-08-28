@@ -7,6 +7,7 @@
 #if defined(MC_NUMERIC_IQMATH)
 #include "IQmathLib.h"
 typedef _iq24 mc_real_t;
+typedef int64_t mc_accum_t;
 _Static_assert(sizeof(mc_real_t) == sizeof(int32_t),
                "IQ24 storage must be a 32-bit signed value");
 #define MC_CONST(value) ((_iq24)_IQ24(value))
@@ -17,6 +18,7 @@ _Static_assert(sizeof(mc_real_t) == sizeof(int32_t),
 #else
 #include <math.h>
 typedef float mc_real_t;
+typedef double mc_accum_t;
 #define MC_CONST(value) ((float)(value))
 #define MC_ZERO         (0.0F)
 #define MC_ONE          (1.0F)
@@ -97,19 +99,23 @@ static inline mc_real_t McMath_Abs(mc_real_t value)
 static inline mc_real_t McMath_Mul(mc_real_t a, mc_real_t b)
 {
 #if defined(MC_NUMERIC_IQMATH)
-    int64_t product = ((int64_t)a * (int64_t)b) >> 24;
-    if (product > INT32_MAX)
+    int64_t product = (int64_t)a * (int64_t)b;
+    int64_t magnitude = product < 0 ? -product : product;
+    int64_t rounded = (magnitude + ((int64_t)1 << 23)) >> 24;
+    if (product < 0)
+        rounded = -rounded;
+    if (rounded > INT32_MAX)
     {
         McMath_Diagnostics.saturation_count++;
         return (mc_real_t)INT32_MAX;
     }
-    if (product < INT32_MIN)
+    if (rounded < INT32_MIN)
     {
         McMath_Diagnostics.saturation_count++;
         return (mc_real_t)INT32_MIN;
     }
-    /* Use the supplied library for the actual in-range IQ24 operation. */
-    return _IQ24mpy(a, b);
+    /* IQmath rmpy performs the required Q48-to-Q24 rounding and saturation. */
+    return _IQ24rmpy(a, b);
 #else
     return a * b;
 #endif
@@ -129,6 +135,19 @@ static inline mc_real_t McMath_Div(mc_real_t numerator,
 #endif
     }
 #if defined(MC_NUMERIC_IQMATH)
+    int64_t quotient = ((int64_t)numerator
+                        * ((int64_t)1 << MC_Q_FRACTIONAL_BITS))
+                     / (int64_t)denominator;
+    if (quotient > INT32_MAX)
+    {
+        McMath_Diagnostics.saturation_count++;
+        return (mc_real_t)INT32_MAX;
+    }
+    if (quotient < INT32_MIN)
+    {
+        McMath_Diagnostics.saturation_count++;
+        return (mc_real_t)INT32_MIN;
+    }
     return _IQ24div(numerator, denominator);
 #else
     return numerator / denominator;

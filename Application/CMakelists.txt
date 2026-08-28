@@ -1,10 +1,15 @@
 #
 if(NUMERIC_BACKEND STREQUAL "IQMATH")
     set(User_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/Src/fixed_control.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/fixed_control_gateway.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/foc_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/identification_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/mtpa_iq.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/initialization_iq.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/Src/motor_iq.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/Src/protect_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/motor_iq_core.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/motor_iq_gateway.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/protect_iq_core.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/protect_iq_gateway.c
     )
 else()
     set(User_SOURCES
@@ -20,6 +25,10 @@ endif()
 add_library(User STATIC
     ${User_SOURCES}
 )
+
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    target_compile_options(User PRIVATE -fstack-usage)
+endif()
 
 target_include_directories(User PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/Inc

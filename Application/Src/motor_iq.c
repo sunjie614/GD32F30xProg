@@ -1,3 +1,5 @@
+/* LEGACY IQMATH PROTOTYPE - not part of the current IQMATH target.
+ * See motor_iq_core.c and motor_iq_gateway.c. */
 #include "motor.h"
 
 #include <stddef.h>

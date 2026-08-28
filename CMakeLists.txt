@@ -88,6 +88,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     ARM_MATH_CM4 # 启用 ARM Cortex-M4 的数学库优化
     __FPU_PRESENT=1 # 声明存在浮点运算单元 (FPU)
 )
+if(NUMERIC_BACKEND STREQUAL "IQMATH")
+    target_compile_options(${PROJECT_NAME} PRIVATE -fstack-usage)
+endif()
 
 # ==============================================================================
 # 子模块和依赖库配置

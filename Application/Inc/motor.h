@@ -20,7 +20,7 @@ typedef struct {
 bool  Motor_Set_SampleTime(const SystemTimeConfig_t* time_config);
 bool  Motor_Initialization(const MotorParam_t* motor_params);
 bool  Motor_Set_SpeedPrescaler(uint16_t prescaler);
-bool  Motor_Set_Filter(float sample_freq, float cutoff_freq);
+bool  Motor_Set_Filter(float cutoff_freq, float sample_freq);
 void  Motor_Set_Position(uint16_t position);
 void  Motor_Set_Theta_Elec(float theta);
 float Motor_Get_ThetaElec(void);

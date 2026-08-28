@@ -2,6 +2,7 @@
 #include "Initialization.h"
 #include "com.h"
 #include "hardware_interface.h"
+#include "main_int.h"
 
 bool pin = false;
 
@@ -20,6 +21,9 @@ int main(void)
 #endif
     while (1)
     {
+#if defined(MC_NUMERIC_IQMATH)
+        MainInt_ControlBackground();
+#endif
         COM_CANProtocol();
         COM_SCIProtocol();
         // COM_DAQProtocol(systick_ms); Use CCP DAQ may cause PiSnoop display

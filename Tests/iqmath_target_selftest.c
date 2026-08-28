@@ -5,7 +5,8 @@
    deterministic IQmath conversion/arithmetic/trigonometric checks passed. */
 int main(void)
 {
-    FixedControl_Init();
+    FixedControlState_t state;
+    FixedControl_Init(&state);
     FixedControlSelfTest_t result = FixedControl_RunSelfTest();
     uint32_t failures = result.conversion_failures
                       + result.arithmetic_failures

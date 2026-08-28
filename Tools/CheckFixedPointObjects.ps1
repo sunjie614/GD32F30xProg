@@ -10,24 +10,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "objdump failed for $object"
 }
 
-$coreFunctions = @(
-    'fixed_pi_step',
-    'fixed_clarke',
-    'fixed_park',
-    'fixed_inverse_park',
-    'fixed_svpwm',
-    'fixed_observer_step',
-    'fixed_mtpa_id',
-    'fixed_identification_step'
-)
-$forbidden = 'v(add|sub|mul|div|sqrt)\.f32|__aeabi_f(add|sub|mul|div|2d|d2f)'
+$forbidden = 'v(add|sub|mul|div|sqrt|mla|mls|nmul|neg|abs)\.f32|__aeabi_(f|d)|__aeabi_.*2(f|d)'
 $current = ''
 $failures = @()
 foreach ($line in $disassembly) {
     if ($line -match '^\s*[0-9a-f]+\s+<([^>]+)>:$') {
         $current = $Matches[1]
     }
-    if ($current -in $coreFunctions -and $line -match $forbidden) {
+    if ($line -match $forbidden) {
         $failures += "${current}: $line"
     }
 }

@@ -2,20 +2,11 @@
 #define _FOC_H_
 
 #include <stdbool.h>
+#include "foc_mode.h"
 #include "pid.h"
 #include "reciprocal.h"
 #include "signal.h"
 #include "transformation.h"
-
-typedef enum
-{
-    IDLE,
-    VF_MODE,
-    IF_MODE,
-    SPEED,
-    STARTUP,
-    IDENTIFY
-} FocMode_t;
 
 typedef struct
 {

@@ -1,3 +1,5 @@
+/* LEGACY IQMATH PROTOTYPE - intentionally retained for comparison only.
+ * The IQMATH target now compiles fixed_control_gateway.c + foc_iq.c instead. */
 #include "fixed_control.h"
 
 #include <stddef.h>

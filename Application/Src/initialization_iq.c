@@ -9,6 +9,8 @@
 #include "gd32f30x_exti.h"
 #include "gd32f30x_gpio.h"
 #include "gpio.h"
+#include "hardware_interface.h"
+#include "main_int.h"
 #include "motor.h"
 #include "parameters.h"
 #include "position_sensor.h"
@@ -50,7 +52,7 @@ bool Initialization_Modules(void)
     result = Motor_Set_SpeedPrescaler((uint16_t)SPEED_LOOP_PRESCALER) && result;
     result = Motor_Set_Filter(10.0F, SPEED_LOOP_FREQ) && result;
     Buffer_Init(BUFFER_CAPACITY, BUFFER_PRESCALER);
-    FixedControl_Init();
+    MainInt_ControlInit();
     return result;
 }
 
@@ -99,6 +101,16 @@ bool Initialization_Drivers(void)
                   MAIN_INT_TIMER_PERIOD,
                   MAIN_INT_TIMER_DEADTIME_PERIOD);
     Adc_Initialization();
+    /* Complete the safety initialization before the ADC interrupt can run.
+     * The legacy ISR had an INIT branch for these actions, but its initial
+     * state was RUNNING, so relying on that branch could leave current offsets
+     * and the protection latch uninitialized. */
+    Peripheral_CalibrateADC();
+    FloatWithInv_t initial_bus = Peripheral_UpdateUdc();
+    if (initial_bus.val > 200.0F)
+        Peripheral_EnableHardwareProtect();
+    Peripheral_Reset_ProtectFlag();
+    Peripheral_Set_Stop(true);
     Can_Initialization();
     gpio_bit_set(SOFT_OPEN_PORT, SOFT_OPEN_PIN);
     fixed_init_exti();

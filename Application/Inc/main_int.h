@@ -9,5 +9,7 @@ typedef enum {
 } DeviceStateEnum_t;
 
 void Main_Int_Handler(void);
+void MainInt_ControlInit(void);
+void MainInt_ControlBackground(void);
 
 #endif /* __MAIN_INT_H__ */
