@@ -44,6 +44,15 @@ OF SUCH DAMAGE.
 
 static volatile uint16_t systick_cnt = 0x0000U;
 
+#if defined(MC_NUMERIC_IQMATH)
+static inline void fixed_emergency_gate_off(void) {
+    /* TIMER0 continues running after a CPU fault. Do not leave the last
+     * compare values actively driving the bridge while the CPU is halted. */
+    TIMER_CCHP(TIMER0) &= ~((uint32_t)TIMER_CCHP_POEN);
+    Peripheral_Set_Stop(true);
+}
+#endif
+
 /*!
     \brief      this function handles NMI exception
     \param[in]  none
@@ -51,6 +60,9 @@ static volatile uint16_t systick_cnt = 0x0000U;
     \retval     none
 */
 void NMI_Handler(void) {
+#if defined(MC_NUMERIC_IQMATH)
+    fixed_emergency_gate_off();
+#endif
 }
 
 /*!
@@ -60,6 +72,9 @@ void NMI_Handler(void) {
     \retval     none
 */
 void HardFault_Handler(void) {
+#if defined(MC_NUMERIC_IQMATH)
+    fixed_emergency_gate_off();
+#endif
     /* if Hard Fault exception occurs, go to infinite loop */
     while (1) {
     }
@@ -72,6 +87,9 @@ void HardFault_Handler(void) {
     \retval     none
 */
 void MemManage_Handler(void) {
+#if defined(MC_NUMERIC_IQMATH)
+    fixed_emergency_gate_off();
+#endif
     /* if Memory Manage exception occurs, go to infinite loop */
     while (1) {
     }
@@ -84,6 +102,9 @@ void MemManage_Handler(void) {
     \retval     none
 */
 void BusFault_Handler(void) {
+#if defined(MC_NUMERIC_IQMATH)
+    fixed_emergency_gate_off();
+#endif
     /* if Bus Fault exception occurs, go to infinite loop */
     while (1) {
     }
@@ -96,6 +117,9 @@ void BusFault_Handler(void) {
     \retval     none
 */
 void UsageFault_Handler(void) {
+#if defined(MC_NUMERIC_IQMATH)
+    fixed_emergency_gate_off();
+#endif
     /* if Usage Fault exception occurs, go to infinite loop */
     while (1) {
     }
@@ -173,7 +197,14 @@ void TIMER0_BRK_IRQHandler(void) {
         // 清除 Break 中断标志
         timer_interrupt_flag_clear(TIMER0, TIMER_INT_FLAG_BRK);
         Peripheral_Set_Stop(true);
+        /* The IQMATH startup path enables the break IRQ before arming PWM.
+         * A software-generated break is an expected stop, not a gate fault.
+         * Keep the legacy FLOAT_REF behavior unchanged for comparison. */
+#if defined(MC_NUMERIC_IQMATH)
+        if (!Peripheral_Get_SoftwareBrk() || !Peripheral_Get_HardwareBrk()) {
+#else
         if (Peripheral_Get_SoftwareBrk()) {
+#endif
             Protect_HardWareFault(false);
             timer_interrupt_disable(TIMER0,
                                     TIMER_INT_BRK);  // 禁用BRK中断

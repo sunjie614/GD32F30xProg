@@ -128,6 +128,91 @@ static FocMode_t gateway_validate_mode(FocMode_t mode)
     return mode;
 }
 
+static uint16_t gateway_clamp_count(int value, uint16_t minimum,
+                                    uint16_t maximum)
+{
+    if (value < (int)minimum)
+        return minimum;
+    if (value > (int)maximum)
+        return maximum;
+    return (uint16_t)value;
+}
+
+static ExpState_e gateway_identification_state(
+    IdentificationIqState_e state)
+{
+    switch (state)
+    {
+    case IDENTIFICATION_IQ_EST_RS: return EST_RS;
+    case IDENTIFICATION_IQ_PROCESS: return PROCESS;
+    case IDENTIFICATION_IQ_INJECT_COLLECT: return INJECT_COLLECT;
+    case IDENTIFICATION_IQ_NEXT_CURRENT: return NEXT_I;
+    case IDENTIFICATION_IQ_LLS: return LLS;
+    case IDENTIFICATION_IQ_PENDING: return PENDING;
+    case IDENTIFICATION_IQ_DONE: return DONE;
+    case IDENTIFICATION_IQ_FAILED:
+    case IDENTIFICATION_IQ_WAIT:
+    default: return WAIT;
+    }
+}
+
+static float gateway_coefficient_to_physical(mc_real_t value,
+                                             uint8_t flux_power)
+{
+    float scale = MC_CURRENT_BASE_A;
+    for (uint8_t power = 0U; power < flux_power; ++power)
+        scale /= MC_FLUX_BASE_WB;
+    return McMath_ToFloat(value) * scale;
+}
+
+static float gateway_accum_to_physical(mc_accum_t value, float scale)
+{
+#if defined(MC_NUMERIC_IQMATH)
+    return ((float)value / (float)(1UL << MC_Q_FRACTIONAL_BITS)) * scale;
+#else
+    return (float)value * scale;
+#endif
+}
+
+static void gateway_initialize_identification_mirror(void)
+{
+    Experiment.Ts = MAIN_LOOP_TIME;
+    Experiment.Rs_est = 0.0F;
+    Experiment.sample_capacity = IDENTIFICATION_IQ_SAMPLE_CAPACITY;
+    Experiment.max_steps = IDENTIFICATION_IQ_MAX_STEPS;
+    Experiment.repeat_times = 3;
+    Experiment.repeat_count = 0;
+    Experiment.sum_max_psi = 0.0F;
+    Experiment.sum_max_I = 0.0F;
+    Experiment.wait_edges = 3;
+    Experiment.start_I = 3;
+    Experiment.final_I = 12;
+    Experiment.step_dir = 1;
+    Experiment.pos = 0;
+    Experiment.edge_count = 0;
+    Experiment.step_index = 0;
+    Experiment.state = WAIT;
+    Experiment.inj = (VoltageInjector_t){0};
+    Experiment.inj.mode = INJECT_D;
+    Experiment.inject_amp = 100.0F;
+    Experiment.Complete = false;
+    Experiment.Initialized = true;
+    Experiment.LLS = (LLS_Result_t){0};
+    for (uint16_t index = 0U; index < IDENTIFICATION_IQ_MAX_STEPS; ++index)
+        Experiment.results[index] = (ImaxResult_t){0};
+    Identification_Voltage = 100.0F;
+    Identification_Rs = 0.0F;
+    Identification_State = IDENTIFICATION_IQ_WAIT;
+    Identification_Error = IDENTIFICATION_IQ_NO_ERROR;
+}
+
+bool FixedControl_ModeRequestsStop(void)
+{
+    /* Match FLOAT_REF's Foc_Get_ResetFlag(): IDLE must keep hardware Stop
+     * asserted, not merely reset the algorithm and emit neutral duty. */
+    return gateway_validate_mode(Foc_Mode) == IDLE;
+}
+
 static void gateway_read_parameters(FocIqParameters_t* parameters)
 {
     FocIq_DefaultParameters(parameters);
@@ -211,6 +296,42 @@ static void gateway_read_parameters(FocIqParameters_t* parameters)
         Foc_Pid_CurQ_Handler.MaxOutput, MC_VOLTAGE_BASE_V);
     parameters->current_q_integral_limit_pu = gateway_from_physical(
         Foc_Pid_CurQ_Handler.IntegralLimit, MC_VOLTAGE_BASE_V);
+
+    IdentificationIqConfig_t* identification =
+        &parameters->identification_config;
+    identification->manual_control = true;
+    identification->sample_capacity = gateway_clamp_count(
+        Experiment.sample_capacity, 2U, IDENTIFICATION_IQ_SAMPLE_CAPACITY);
+    identification->repeat_times = gateway_clamp_count(
+        Experiment.repeat_times, 1U, 3U);
+    identification->max_steps = gateway_clamp_count(
+        Experiment.max_steps, 1U, IDENTIFICATION_IQ_MAX_STEPS);
+    identification->wait_edges = gateway_clamp_count(
+        Experiment.wait_edges, 0U, 100U);
+    Experiment.sample_capacity = (int)identification->sample_capacity;
+    Experiment.repeat_times = (int)identification->repeat_times;
+    Experiment.max_steps = (int)identification->max_steps;
+    Experiment.wait_edges = (int)identification->wait_edges;
+    identification->current_start_pu = gateway_from_physical(
+        (float)Experiment.start_I, MC_CURRENT_BASE_A);
+    identification->current_final_pu = gateway_from_physical(
+        (float)Experiment.final_I, MC_CURRENT_BASE_A);
+    identification->current_step_pu = gateway_from_physical(
+        Experiment.step_dir < 0 ? -1.0F : 1.0F, MC_CURRENT_BASE_A);
+    Experiment.step_dir = Experiment.step_dir < 0 ? -1 : 1;
+    identification->injection_voltage_d_pu = gateway_from_physical(
+        Experiment.inj.Ud_amp, MC_VOLTAGE_BASE_V);
+    identification->injection_voltage_q_pu = gateway_from_physical(
+        Experiment.inj.Uq_amp, MC_VOLTAGE_BASE_V);
+    parameters->identification_start_rs = Experiment.state == EST_RS;
+    parameters->identification_start_axis = Experiment.state == NEXT_I;
+    parameters->identification_injection_enable = Experiment.inj.State;
+    float ud_absolute = Experiment.inj.Ud_amp >= 0.0F
+                      ? Experiment.inj.Ud_amp : -Experiment.inj.Ud_amp;
+    float uq_absolute = Experiment.inj.Uq_amp >= 0.0F
+                      ? Experiment.inj.Uq_amp : -Experiment.inj.Uq_amp;
+    Identification_Voltage = ud_absolute > uq_absolute
+                           ? ud_absolute : uq_absolute;
     Foc_StartupPrepareRequest = false;
 }
 
@@ -269,20 +390,126 @@ static void gateway_write_telemetry(const FocIqState_t* state,
     Foc_Pid_CurQ_Handler.previous_error = gateway_to_physical(
         state->current_q_pid.last_error, MC_CURRENT_BASE_A);
     Foc_Pid_CurQ_Handler.output = Foc_Uq_Ref;
-    Identification_State = (uint16_t)value->identification_state;
-    Identification_Error = (uint16_t)value->identification_error;
-    Identification_Rs = gateway_to_physical(
-        state->identification.resistance_pu,
-        MC_VOLTAGE_BASE_V / MC_CURRENT_BASE_A);
+    if (state->mode == IDENTIFY)
+    {
+        Identification_State = (uint16_t)value->identification_state;
+        Identification_Error = (uint16_t)value->identification_error;
+        Identification_Rs = gateway_to_physical(
+            state->identification.resistance_pu,
+            MC_VOLTAGE_BASE_V / MC_CURRENT_BASE_A);
+    }
     Foc_StartupActive = value->startup_active;
     Sensorless_UsingHfi = value->using_hfi;
     Mtpa_TableValid = state->mtpa.table_valid;
     Mtpa_RebuildPending = state->mtpa_rebuild_pending
                        || state->mtpa_rebuild_in_progress;
     Mtpa_RebuildFailed = state->mtpa_rebuild_failed;
+    /* DONE/FAILED requests IDLE.  Preserve the last experiment mirrors after
+     * that transition instead of overwriting them with Reset's zero state. */
+    if (state->mode != IDENTIFY)
+        return;
+    bool injection_mode_changed = (uint32_t)Experiment.inj.mode
+                               != (uint32_t)state->identification.injection_mode;
+    if (injection_mode_changed)
+    {
+        /* The original PENDING state clears both amplitudes before Q and DQ.
+         * Keep that manual safety gate: the operator must enter the next
+         * stage's voltage explicitly. */
+        Experiment.inj.Ud_amp = 0.0F;
+        Experiment.inj.Uq_amp = 0.0F;
+    }
     Experiment.Initialized = true;
     Experiment.Complete = value->identification_state == IDENTIFICATION_IQ_DONE;
     Experiment.Rs_est = Identification_Rs;
+    Experiment.state = gateway_identification_state(
+        value->identification_state);
+    Experiment.inj.mode = (Inj_Mode_e)state->identification.injection_mode;
+    Experiment.inj.State = state->identification.point_started
+                        && value->identification_state
+                           == IDENTIFICATION_IQ_INJECT_COLLECT;
+    Experiment.inj.inj_state_d = state->identification.injection_d_positive
+                               ? 1 : -1;
+    Experiment.inj.inj_state_q = state->identification.injection_q_positive
+                               ? 1 : -1;
+    Experiment.inj.Vd = Foc_Ud_Ref;
+    Experiment.inj.Vq = Foc_Uq_Ref;
+    Experiment.inj.Imax = gateway_to_physical(
+        state->identification.current_target_pu, MC_CURRENT_BASE_A);
+    Experiment.inj.IDmax = Experiment.inj.Imax;
+    Experiment.inj.IQmax = Experiment.inj.Imax;
+    Experiment.pos = (int)state->identification.sample_count;
+    Experiment.edge_count = (int)state->identification.edge_count;
+    Experiment.repeat_count = (int)state->identification.repeat_count;
+    Experiment.step_index = (int)state->identification.step_index;
+    if (value->identification_state == IDENTIFICATION_IQ_PENDING
+        || value->identification_state == IDENTIFICATION_IQ_DONE
+        || value->identification_state == IDENTIFICATION_IQ_FAILED)
+    {
+        Experiment.LLS.ad0 = gateway_coefficient_to_physical(
+            state->identification.coefficients.ad0, 1U);
+        Experiment.LLS.add = gateway_coefficient_to_physical(
+            state->identification.coefficients.add, 6U);
+        Experiment.LLS.aq0 = gateway_coefficient_to_physical(
+            state->identification.coefficients.aq0, 1U);
+        Experiment.LLS.aqq = gateway_coefficient_to_physical(
+            state->identification.coefficients.aqq, 2U);
+        Experiment.LLS.adq = gateway_coefficient_to_physical(
+            state->identification.coefficients.adq, 4U);
+        Experiment.LLS.D.J = gateway_accum_to_physical(
+            state->identification.coefficients.ssr_d,
+            MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+        Experiment.LLS.Q.J = gateway_accum_to_physical(
+            state->identification.coefficients.ssr_q,
+            MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+        Experiment.LLS.D.R2 = McMath_ToFloat(
+            state->identification.coefficients.r2_d);
+        Experiment.LLS.Q.R2 = McMath_ToFloat(
+            state->identification.coefficients.r2_q);
+        Experiment.LLS.DQ.J[0] = gateway_accum_to_physical(
+            state->identification.dq_sum_residual_d_squared,
+            MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+        Experiment.LLS.DQ.J[1] = gateway_accum_to_physical(
+            state->identification.dq_sum_residual_q_squared,
+            MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+        Experiment.LLS.DQ.R2[0] = McMath_ToFloat(
+            state->identification.coefficients.r2_dq_d);
+        Experiment.LLS.DQ.R2[1] = McMath_ToFloat(
+            state->identification.coefficients.r2_dq_q);
+    }
+
+    if (state->identification.step_index < IDENTIFICATION_IQ_MAX_STEPS)
+    {
+        uint16_t index = state->identification.step_index;
+        bool show_d_results = state->identification.injection_mode
+                           == IDENTIFICATION_IQ_INJECT_D;
+        const IdentificationIqPoint_t* point = show_d_results
+            ? &state->identification.d_results[index]
+            : &state->identification.q_results[index];
+        if (point->valid)
+        {
+            Experiment.results[index].Imax_value = gateway_to_physical(
+                point->current_pu, MC_CURRENT_BASE_A);
+            Experiment.results[index].avg_max_psi = gateway_to_physical(
+                point->maximum_flux_pu, MC_FLUX_BASE_WB);
+            Experiment.results[index].cycles_used = Experiment.repeat_times;
+        }
+    }
+    if (state->identification.sample_count > 0U)
+    {
+        uint16_t index = (uint16_t)(state->identification.sample_count - 1U);
+        Experiment.Ud_buf[index] = gateway_to_physical(
+            state->identification.voltage_d[index], MC_VOLTAGE_BASE_V);
+        Experiment.Uq_buf[index] = gateway_to_physical(
+            state->identification.voltage_q[index], MC_VOLTAGE_BASE_V);
+        Experiment.Id_buf[index] = gateway_to_physical(
+            state->identification.current_d[index], MC_CURRENT_BASE_A);
+        Experiment.Iq_buf[index] = gateway_to_physical(
+            state->identification.current_q[index], MC_CURRENT_BASE_A);
+        Experiment.psi_d_buf[index] = gateway_to_physical(
+            state->identification.flux_d[index], MC_FLUX_BASE_WB);
+        Experiment.psi_q_buf[index] = gateway_to_physical(
+            state->identification.flux_q[index], MC_FLUX_BASE_WB);
+    }
 }
 
 void FixedControl_Init(FixedControlState_t* state)
@@ -320,10 +547,13 @@ FixedControlOutput_t FixedControl_Step(FixedControlState_t* state,
         return output;
     }
     FixedControl_CycleCount++;
+    FocMode_t requested_mode = gateway_validate_mode(Foc_Mode);
+    if (requested_mode == IDENTIFY
+        && state->gateway_previous_mode != IDENTIFY)
+        gateway_initialize_identification_mirror();
+    state->gateway_previous_mode = requested_mode;
     Foc_Reset = input->reset || gateway_validate_mode(Foc_Mode) == IDLE;
     gateway_read_parameters(&state->parameters);
-    state->foc.identification.config.injection_voltage_pu =
-        gateway_from_physical(Identification_Voltage, MC_VOLTAGE_BASE_V);
     FocIqInput_t fixed_input = {
         .current_abc_pu = {
             gateway_from_physical(input->current_abc.a, MC_CURRENT_BASE_A),
@@ -335,6 +565,12 @@ FixedControlOutput_t FixedControl_Step(FixedControlState_t* state,
             input->speed_rpm, MC_SPEED_BASE_RPM),
         .bus_voltage_pu = gateway_from_physical(
             input->bus_voltage, MC_VOLTAGE_BASE_V)};
+    output.bus_voltage_q24_raw = fixed_input.bus_voltage_pu;
+    output.phase_a_current_q24_raw = fixed_input.current_abc_pu.a;
+    output.bus_voltage_q24_v = gateway_to_physical(
+        fixed_input.bus_voltage_pu, MC_VOLTAGE_BASE_V);
+    output.phase_a_current_q24_a = gateway_to_physical(
+        fixed_input.current_abc_pu.a, MC_CURRENT_BASE_A);
     FocIqOutput_t fixed_output = {0};
     FocIq_Run(&state->foc, &state->parameters,
               &fixed_input, &fixed_output);

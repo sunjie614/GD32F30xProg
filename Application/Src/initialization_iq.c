@@ -20,6 +20,10 @@
 #include "usart.h"
 
 volatile uint32_t DWT_Count = 0U;
+/* 0: not started, 1: algorithm init failed, 2: ADC calibration failed,
+ * 3: initialized. A failed startup leaves PWM MOE disabled. */
+volatile uint16_t FixedStartup_Status = 0U;
+volatile bool FixedBreakIrqArmed = false;
 
 static const SystemTimeConfig_t Fixed_SystemTime = {
     .current = {.val = MAIN_LOOP_TIME, .inv = MAIN_LOOP_FREQ},
@@ -53,6 +57,9 @@ bool Initialization_Modules(void)
     result = Motor_Set_Filter(10.0F, SPEED_LOOP_FREQ) && result;
     Buffer_Init(BUFFER_CAPACITY, BUFFER_PRESCALER);
     MainInt_ControlInit();
+    result = MainInt_ControlReady() && result;
+    if (!result)
+        FixedStartup_Status = 1U;
     return result;
 }
 
@@ -105,10 +112,18 @@ bool Initialization_Drivers(void)
      * The legacy ISR had an INIT branch for these actions, but its initial
      * state was RUNNING, so relying on that branch could leave current offsets
      * and the protection latch uninitialized. */
-    Peripheral_CalibrateADC();
+    if (!Adc_Calibrate_CurrentOffsetChecked())
+    {
+        FixedStartup_Status = 2U;
+        Peripheral_Set_Stop(true);
+        return false;
+    }
     FloatWithInv_t initial_bus = Peripheral_UpdateUdc();
     if (initial_bus.val > 200.0F)
+    {
         Peripheral_EnableHardwareProtect();
+        FixedBreakIrqArmed = true;
+    }
     Peripheral_Reset_ProtectFlag();
     Peripheral_Set_Stop(true);
     Can_Initialization();
@@ -116,5 +131,17 @@ bool Initialization_Drivers(void)
     fixed_init_exti();
     fixed_init_nvic();
     Com_Initialization();
+    FixedStartup_Status = 3U;
     return true;
+}
+
+void Initialization_ArmHardwareProtectIfReady(void)
+{
+    /* Startup may occur with an uncharged DC bus. Never re-enable after a
+     * hardware-fault ISR has deliberately disabled the break interrupt. */
+    if (!FixedBreakIrqArmed && Adc_Get_VoltageBus() > 200.0F)
+    {
+        Peripheral_EnableHardwareProtect();
+        FixedBreakIrqArmed = true;
+    }
 }

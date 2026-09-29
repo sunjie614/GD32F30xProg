@@ -1,5 +1,6 @@
 param(
-    [string]$BuildDirectory = 'build-iqmath-softfp'
+    [string]$BuildDirectory = 'build-iqmath-softfp',
+    [string]$PythonExecutable = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,7 +24,26 @@ if ($LASTEXITCODE -ne 0) {
     throw 'a2ltool failed.'
 }
 
-& python (Join-Path $PSScriptRoot 'A2LFilter.py') `
+$pythonCandidates = @()
+if ($PythonExecutable) { $pythonCandidates += $PythonExecutable }
+if ($env:PYTHON) { $pythonCandidates += $env:PYTHON }
+$bundledPython = Join-Path $env:USERPROFILE `
+    '.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+if (Test-Path -LiteralPath $bundledPython) {
+    $pythonCandidates += $bundledPython
+}
+foreach ($name in @('py.exe', 'python.exe', 'python3.exe')) {
+    $candidate = Get-Command $name -ErrorAction SilentlyContinue
+    if ($candidate -and $candidate.Source -notmatch '[\\/]WindowsApps[\\/]') {
+        $pythonCandidates += $candidate.Source
+    }
+}
+$python = $pythonCandidates | Select-Object -First 1
+if (-not $python) {
+    throw 'Python not found. Install Python or pass -PythonExecutable.'
+}
+
+& $python (Join-Path $PSScriptRoot 'A2LFilter.py') `
     --input $a2l `
     --output $a2l
 if ($LASTEXITCODE -ne 0) {

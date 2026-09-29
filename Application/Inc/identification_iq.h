@@ -40,6 +40,7 @@ typedef enum
 
 typedef struct
 {
+    bool manual_control;
     uint16_t sample_capacity;
     uint16_t repeat_times;
     uint16_t max_steps;
@@ -54,6 +55,8 @@ typedef struct
     mc_real_t rs_threshold_pu;
     mc_real_t rs_voltage_step_pu;
     mc_real_t injection_voltage_pu;
+    mc_real_t injection_voltage_d_pu;
+    mc_real_t injection_voltage_q_pu;
     mc_real_t voltage_to_flux_step;
 } IdentificationIqConfig_t;
 
@@ -73,8 +76,12 @@ typedef struct
     mc_real_t adq;
     mc_real_t ssr_d;
     mc_real_t ssr_q;
+    mc_real_t ssr_dq_d;
+    mc_real_t ssr_dq_q;
     mc_real_t r2_d;
     mc_real_t r2_q;
+    mc_real_t r2_dq_d;
+    mc_real_t r2_dq_q;
     bool valid;
 } IdentificationIqCoefficients_t;
 
@@ -109,6 +116,8 @@ typedef struct
     uint16_t edge_count;
     uint16_t repeat_count;
     uint16_t step_index;
+    uint16_t d_result_count;
+    uint16_t q_result_count;
     mc_accum_t dq_sum_xx;
     mc_accum_t dq_sum_xy;
     mc_accum_t dq_sum_id;
@@ -124,12 +133,17 @@ typedef struct
     bool injection_d_positive;
     bool injection_q_positive;
     bool start_requested;
+    bool rs_complete;
+    bool point_started;
 } IdentificationIqState_t;
 
 typedef struct
 {
     mc_real_t current_d_pu;
     mc_real_t current_q_pu;
+    bool start_rs;
+    bool start_axis;
+    bool injection_enable;
     bool reset;
 } IdentificationIqInput_t;
 

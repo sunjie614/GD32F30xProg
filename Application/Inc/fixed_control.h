@@ -26,6 +26,12 @@ typedef struct
     Park_t current_dq;
     float estimated_theta_rad;
     float estimated_speed_rpm;
+    /* The exact ADC-boundary Q24 inputs and their physical round trips.
+     * Diagnostic outputs only; never feed these values back into control. */
+    int32_t bus_voltage_q24_raw;
+    int32_t phase_a_current_q24_raw;
+    float bus_voltage_q24_v;
+    float phase_a_current_q24_a;
 } FixedControlOutput_t;
 
 typedef struct
@@ -40,6 +46,7 @@ typedef struct
 {
     FocIqState_t foc;
     FocIqParameters_t parameters;
+    FocMode_t gateway_previous_mode;
     bool initialized;
 } FixedControlState_t;
 
@@ -50,6 +57,7 @@ FixedControlOutput_t FixedControl_Step(FixedControlState_t* state,
 bool FixedControl_BackgroundBuild(FixedControlState_t* state);
 void FixedControl_CommitBackground(FixedControlState_t* state);
 FixedControlSelfTest_t FixedControl_RunSelfTest(void);
+bool FixedControl_ModeRequestsStop(void);
 
 /* A2L-compatible physical-unit gateway variables. */
 extern volatile FocMode_t Foc_Mode;
@@ -68,6 +76,10 @@ extern volatile bool MainInt_UseRealTheta;
 extern volatile uint16_t Sensorless_Method;
 extern volatile uint32_t FixedControl_CycleCount;
 extern volatile FixedControlSelfTest_t FixedControl_SelfTest;
+extern volatile float Identification_Voltage;
+extern volatile float Identification_Rs;
+extern volatile uint16_t Identification_State;
+extern volatile uint16_t Identification_Error;
 
 #ifdef __cplusplus
 }

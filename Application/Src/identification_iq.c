@@ -46,9 +46,10 @@ void IdentificationIq_DefaultConfig(IdentificationIqConfig_t* config)
     if (config == NULL)
         return;
     *config = (IdentificationIqConfig_t){
+        .manual_control = false,
         .sample_capacity = IDENTIFICATION_IQ_SAMPLE_CAPACITY,
         .repeat_times = 3U,
-        .max_steps = 10U,
+        .max_steps = IDENTIFICATION_IQ_MAX_STEPS,
         .wait_edges = 3U,
         .injection_half_period_cycles = 250U,
         .rs_hold_cycles = 15000U,
@@ -62,6 +63,8 @@ void IdentificationIq_DefaultConfig(IdentificationIqConfig_t* config)
             0.01 * MC_CURRENT_BASE_A / MC_VOLTAGE_BASE_V),
         .rs_voltage_step_pu = MC_CONST(1.0 / MC_VOLTAGE_BASE_V),
         .injection_voltage_pu = MC_CONST(100.0 / MC_VOLTAGE_BASE_V),
+        .injection_voltage_d_pu = MC_CONST(100.0 / MC_VOLTAGE_BASE_V),
+        .injection_voltage_q_pu = MC_CONST(100.0 / MC_VOLTAGE_BASE_V),
         .voltage_to_flux_step = MC_CONST(
             MAIN_LOOP_TIME * MC_VOLTAGE_BASE_V / MC_FLUX_BASE_WB)};
 }
@@ -206,7 +209,8 @@ static void identification_capture(IdentificationIqState_t* state,
             state->injection_q_positive = true;
     }
     state->cycle_count++;
-    if (state->cycle_count >= state->config.injection_half_period_cycles)
+    if (!state->config.manual_control
+        && state->cycle_count >= state->config.injection_half_period_cycles)
     {
         state->cycle_count = 0U;
         if (state->injection_mode != IDENTIFICATION_IQ_INJECT_Q)
@@ -224,14 +228,18 @@ static void identification_capture(IdentificationIqState_t* state,
         state->cycle_count = 0U;
     }
     state->injection_positive = state->injection_d_positive;
+    mc_real_t voltage_d = state->config.manual_control
+                          ? state->config.injection_voltage_d_pu
+                          : state->config.injection_voltage_pu;
+    mc_real_t voltage_q = state->config.manual_control
+                          ? state->config.injection_voltage_q_pu
+                          : state->config.injection_voltage_pu;
     output->voltage_d_pu = state->injection_mode == IDENTIFICATION_IQ_INJECT_Q
         ? MC_ZERO : (state->injection_d_positive
-        ? state->config.injection_voltage_pu
-        : McMath_Neg(state->config.injection_voltage_pu));
+        ? voltage_d : McMath_Neg(voltage_d));
     output->voltage_q_pu = state->injection_mode == IDENTIFICATION_IQ_INJECT_D
         ? MC_ZERO : (state->injection_q_positive
-        ? state->config.injection_voltage_pu
-        : McMath_Neg(state->config.injection_voltage_pu));
+        ? voltage_q : McMath_Neg(voltage_q));
 
     if (state->edge_count >= (uint16_t)(state->config.wait_edges + 3U))
     {
@@ -494,8 +502,189 @@ static void identification_finish_dq(IdentificationIqState_t* state)
         state->dq_sum_xy, average_count);
     state->coefficients.adq = McMath_Clamp(
         McMath_Div(mean_xy, mean_xx), MC_CONST(-32.0), MC_CONST(32.0));
+    mc_real_t mean_id = identification_average(
+        state->dq_sum_id, average_count);
+    mc_real_t mean_iq = identification_average(
+        state->dq_sum_iq, average_count);
+    mc_real_t variance_id = McMath_Sub(
+        identification_average(state->dq_sum_id_squared, average_count),
+        McMath_Mul(mean_id, mean_id));
+    mc_real_t variance_iq = McMath_Sub(
+        identification_average(state->dq_sum_iq_squared, average_count),
+        McMath_Mul(mean_iq, mean_iq));
+    state->coefficients.ssr_dq_d = identification_average(
+        state->dq_sum_residual_d_squared, average_count);
+    state->coefficients.ssr_dq_q = identification_average(
+        state->dq_sum_residual_q_squared, average_count);
+    state->coefficients.r2_dq_d = variance_id <= MC_ZERO ? MC_ZERO
+        : McMath_Sub(MC_ONE, McMath_Div(
+            state->coefficients.ssr_dq_d, variance_id));
+    state->coefficients.r2_dq_q = variance_iq <= MC_ZERO ? MC_ZERO
+        : McMath_Sub(MC_ONE, McMath_Div(
+            state->coefficients.ssr_dq_q, variance_iq));
     state->coefficients.valid = true;
     state->state = IDENTIFICATION_IQ_DONE;
+}
+
+static bool identification_current_series_complete(
+    const IdentificationIqState_t* state)
+{
+    if ((uint16_t)(state->step_index + 1U) >= state->config.max_steps)
+        return true;
+    if (state->config.current_step_pu >= MC_ZERO)
+        return state->current_target_pu >= state->config.current_final_pu;
+    return state->current_target_pu <= state->config.current_final_pu;
+}
+
+static bool identification_fit_manual_axis(IdentificationIqState_t* state)
+{
+    if (state->injection_mode == IDENTIFICATION_IQ_INJECT_D)
+    {
+        bool valid = identification_fit_axis(
+            state->d_results, state->d_result_count, 5U,
+            &state->coefficients.ad0, &state->coefficients.add,
+            &state->coefficients.ssr_d, &state->coefficients.r2_d);
+        if (!valid)
+            return false;
+        state->injection_mode = IDENTIFICATION_IQ_INJECT_Q;
+    }
+    else if (state->injection_mode == IDENTIFICATION_IQ_INJECT_Q)
+    {
+        bool valid = identification_fit_axis(
+            state->q_results, state->q_result_count, 1U,
+            &state->coefficients.aq0, &state->coefficients.aqq,
+            &state->coefficients.ssr_q, &state->coefficients.r2_q);
+        if (!valid)
+            return false;
+        state->single_axis_fit_complete = true;
+        state->injection_mode = IDENTIFICATION_IQ_INJECT_DQ;
+    }
+    else
+    {
+        identification_finish_dq(state);
+        return state->state == IDENTIFICATION_IQ_DONE;
+    }
+    state->step_index = 0U;
+    state->repeat_count = 0U;
+    state->current_target_pu = state->config.current_start_pu;
+    state->point_started = false;
+    identification_reset_capture(state);
+    state->state = IDENTIFICATION_IQ_PENDING;
+    return true;
+}
+
+/* Compatibility workflow for the original Experiment.* A2L operation.
+ * A current point starts only after injection_enable is written. Repeats at
+ * that point are automatic; the next current point waits for a new write. */
+static void identification_run_manual(IdentificationIqState_t* state,
+                                      const IdentificationIqInput_t* input,
+                                      IdentificationIqOutput_t* output)
+{
+    if (state->state == IDENTIFICATION_IQ_WAIT)
+    {
+        if (input->start_rs)
+            state->state = IDENTIFICATION_IQ_EST_RS;
+        else if (state->rs_complete && input->start_axis)
+        {
+            state->injection_mode = IDENTIFICATION_IQ_INJECT_D;
+            state->step_index = 0U;
+            state->repeat_count = 0U;
+            state->current_target_pu = state->config.current_start_pu;
+            state->point_started = false;
+            identification_reset_capture(state);
+            state->state = IDENTIFICATION_IQ_INJECT_COLLECT;
+        }
+    }
+
+    switch (state->state)
+    {
+    case IDENTIFICATION_IQ_EST_RS:
+        identification_run_rs(state, input, output);
+        if (state->state == IDENTIFICATION_IQ_INJECT_COLLECT)
+        {
+            state->rs_complete = true;
+            state->injection_mode = IDENTIFICATION_IQ_INJECT_D;
+            state->current_target_pu = state->config.current_start_pu;
+            state->point_started = false;
+            state->state = IDENTIFICATION_IQ_WAIT;
+            output->voltage_d_pu = MC_ZERO;
+            output->voltage_q_pu = MC_ZERO;
+        }
+        break;
+    case IDENTIFICATION_IQ_INJECT_COLLECT:
+        if (!state->point_started)
+        {
+            if (!input->injection_enable)
+                break;
+            state->point_started = true;
+        }
+        identification_capture(state, input, output);
+        if (state->state == IDENTIFICATION_IQ_PROCESS)
+        {
+            output->voltage_d_pu = MC_ZERO;
+            output->voltage_q_pu = MC_ZERO;
+        }
+        break;
+    case IDENTIFICATION_IQ_PROCESS:
+        if (state->injection_mode == IDENTIFICATION_IQ_INJECT_DQ)
+            identification_process_dq(state);
+        else if (!identification_process_axis(
+                     state, state->injection_mode == IDENTIFICATION_IQ_INJECT_D))
+        {
+            identification_reset_capture(state);
+            state->state = IDENTIFICATION_IQ_INJECT_COLLECT;
+            break;
+        }
+        state->repeat_count++;
+        if (state->repeat_count < state->config.repeat_times)
+        {
+            identification_reset_capture(state);
+            state->state = IDENTIFICATION_IQ_INJECT_COLLECT;
+        }
+        else if (state->injection_mode == IDENTIFICATION_IQ_INJECT_DQ)
+        {
+            state->point_started = false;
+            state->state = IDENTIFICATION_IQ_LLS;
+        }
+        else
+        {
+            state->repeat_count = 0U;
+            state->point_started = false;
+            if (state->injection_mode == IDENTIFICATION_IQ_INJECT_D)
+                state->d_result_count = (uint16_t)(state->step_index + 1U);
+            else
+                state->q_result_count = (uint16_t)(state->step_index + 1U);
+            state->state = IDENTIFICATION_IQ_NEXT_CURRENT;
+        }
+        break;
+    case IDENTIFICATION_IQ_NEXT_CURRENT:
+        if (identification_current_series_complete(state))
+            state->state = IDENTIFICATION_IQ_LLS;
+        else
+        {
+            state->step_index++;
+            state->current_target_pu = McMath_Add(
+                state->current_target_pu, state->config.current_step_pu);
+            identification_reset_capture(state);
+            state->state = IDENTIFICATION_IQ_INJECT_COLLECT;
+        }
+        break;
+    case IDENTIFICATION_IQ_LLS:
+        if (!identification_fit_manual_axis(state)
+            && state->state != IDENTIFICATION_IQ_DONE)
+        {
+            state->error = IDENTIFICATION_IQ_SINGULAR_LLS;
+            state->state = IDENTIFICATION_IQ_FAILED;
+        }
+        break;
+    case IDENTIFICATION_IQ_PENDING:
+        identification_reset_capture(state);
+        state->point_started = false;
+        state->state = IDENTIFICATION_IQ_INJECT_COLLECT;
+        break;
+    default:
+        break;
+    }
 }
 
 void IdentificationIq_Run(IdentificationIqState_t* state,
@@ -508,6 +697,16 @@ void IdentificationIq_Run(IdentificationIqState_t* state,
     if (input->reset)
     {
         IdentificationIq_Reset(state);
+        return;
+    }
+    if (state->config.manual_control)
+    {
+        identification_run_manual(state, input, output);
+        output->running = state->state != IDENTIFICATION_IQ_WAIT
+                       && state->state != IDENTIFICATION_IQ_DONE
+                       && state->state != IDENTIFICATION_IQ_FAILED;
+        output->complete = state->state == IDENTIFICATION_IQ_DONE;
+        output->valid = state->coefficients.valid;
         return;
     }
     if (state->state == IDENTIFICATION_IQ_WAIT && state->start_requested)

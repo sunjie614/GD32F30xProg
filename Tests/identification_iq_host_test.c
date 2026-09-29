@@ -8,6 +8,84 @@ static int within_relative(float actual, float reference, float limit)
     return fabsf(actual - reference) / denominator <= limit;
 }
 
+static int manual_workflow_completes(void)
+{
+    IdentificationIqConfig_t config;
+    IdentificationIqState_t state;
+    IdentificationIqInput_t input = {0};
+    IdentificationIqOutput_t output = {0};
+    IdentificationIq_DefaultConfig(&config);
+    config.manual_control = true;
+    config.sample_capacity = 128U;
+    config.repeat_times = 2U;
+    config.max_steps = 6U;
+    config.wait_edges = 1U;
+    config.rs_hold_cycles = 100U;
+    config.current_start_pu = MC_CONST(0.03);
+    config.current_final_pu = MC_CONST(0.18);
+    config.current_step_pu = MC_CONST(0.03);
+    config.current_limit_pu = MC_CONST(0.8);
+    config.rs_current_target_pu = MC_CONST(0.15);
+    config.rs_threshold_pu = MC_CONST(0.01);
+    config.rs_voltage_step_pu = MC_CONST(0.02);
+    config.injection_voltage_d_pu = MC_CONST(0.10);
+    config.injection_voltage_q_pu = MC_CONST(0.10);
+    config.voltage_to_flux_step = MC_CONST(0.16);
+    IdentificationIq_Init(&state, &config);
+
+    const float plant_resistance = 0.2F;
+    const float plant_ad0 = 0.1F;
+    const float plant_add = 20.0F;
+    const float plant_aq0 = 0.2F;
+    const float plant_aqq = 0.5F;
+    const float plant_adq = 0.2F;
+    float plant_flux_d = 0.0F;
+    float plant_flux_q = 0.0F;
+    float current_d = 0.0F;
+    float current_q = 0.0F;
+    unsigned enable_count = 0U;
+    for (unsigned iteration = 0U; iteration < 1000000U; ++iteration)
+    {
+        input.current_d_pu = McMath_FromFloat(current_d);
+        input.current_q_pu = McMath_FromFloat(current_q);
+        input.start_rs = state.state == IDENTIFICATION_IQ_WAIT
+                      && !state.rs_complete;
+        input.start_axis = state.state == IDENTIFICATION_IQ_WAIT
+                        && state.rs_complete;
+        input.injection_enable = state.state
+                              == IDENTIFICATION_IQ_INJECT_COLLECT
+                              && !state.point_started;
+        if (input.injection_enable)
+            enable_count++;
+        IdentificationIq_Run(&state, &input, &output);
+        float voltage_d = McMath_ToFloat(output.voltage_d_pu);
+        float voltage_q = McMath_ToFloat(output.voltage_q_pu);
+        plant_flux_d += 0.16F * (voltage_d
+                      - plant_resistance * current_d);
+        plant_flux_q += 0.16F * (voltage_q
+                      - plant_resistance * current_q);
+        float absolute_flux_d = fabsf(plant_flux_d);
+        float absolute_flux_q = fabsf(plant_flux_q);
+        float d_term = plant_ad0
+                     + plant_add * powf(absolute_flux_d, 5.0F)
+                     + 0.5F * plant_adq * absolute_flux_d
+                     * absolute_flux_q * absolute_flux_q;
+        float q_term = plant_aq0 + plant_aqq * absolute_flux_q
+                     + (plant_adq / 3.0F)
+                     * absolute_flux_d * absolute_flux_d * absolute_flux_d;
+        current_d = d_term * plant_flux_d;
+        current_q = q_term * plant_flux_q;
+        if (state.state == IDENTIFICATION_IQ_DONE)
+            return state.coefficients.valid
+                && state.d_result_count == config.max_steps
+                && state.q_result_count == config.max_steps
+                && enable_count == (unsigned)(config.max_steps * 2U + 1U);
+        if (state.state == IDENTIFICATION_IQ_FAILED)
+            return 0;
+    }
+    return 0;
+}
+
 int main(void)
 {
     IdentificationIqConfig_t config;
@@ -110,6 +188,11 @@ int main(void)
         || McMath_Diagnostics.invalid_input_count != 0U)
     {
         fprintf(stderr, "FAIL identification result bounds\n");
+        return 1;
+    }
+    if (!manual_workflow_completes())
+    {
+        fprintf(stderr, "FAIL legacy manual identification workflow\n");
         return 1;
     }
     printf("PASS: identification IQ state regression in %u cycles "

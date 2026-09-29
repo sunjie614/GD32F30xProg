@@ -66,5 +66,9 @@ bool Protect_Validate_Flag(void)
 
 void Protect_Reset_Flag(void)
 {
-    ProtectIq_Reset(&ProtectIq_CompatibilityState);
+    /* Legacy public Reset clears the latched flags, not the running
+     * over-average-current sample count. ProtectIq_Reset remains the full
+     * state reset for independently owned algorithm instances. */
+    __atomic_store_n(&ProtectIq_CompatibilityState.flags,
+                     (uint32_t)No_Protect, __ATOMIC_RELAXED);
 }

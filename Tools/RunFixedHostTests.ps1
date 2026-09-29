@@ -62,25 +62,55 @@ try {
         -Includes @('Tests/iqmath_mock', 'Utils/Inc', 'Application/Inc') `
         -Sources $fixedSources
 
+    Invoke-HostTest -Name 'protect_legacy_host_test' `
+        -Definitions @('MC_NUMERIC_FLOAT_REF=1') `
+        -Includes @('Utils/Inc', 'Application/Inc',
+                    'Drivers/CMSIS/CMSIS-DSP/Include',
+                    'Drivers/CMSIS/Core/Include') `
+        -Sources @('Tests/protect_legacy_parity_host_test.c',
+                   'Application/Src/protect.c')
+    Invoke-HostTest -Name 'protect_iqmath_host_test' `
+        -Definitions @('MC_NUMERIC_IQMATH=1', 'GLOBAL_Q=24', 'MATH_TYPE=0') `
+        -Includes @('Tests/iqmath_mock', 'Utils/Inc', 'Application/Inc',
+                    'Drivers/CMSIS/CMSIS-DSP/Include',
+                    'Drivers/CMSIS/Core/Include') `
+        -Sources @('Tests/protect_legacy_parity_host_test.c',
+                   'Application/Src/protect_iq_gateway.c',
+                   'Application/Src/protect_iq_core.c',
+                   'Utils/Src/mc_math.c')
+
+    $focSources = @(
+        'Utils/Src/mc_math.c',
+        'Utils/Src/filter_iq.c',
+        'Utils/Src/pid_iq.c',
+        'Utils/Src/pll_iq.c',
+        'Utils/Src/signal_iq.c',
+        'Utils/Src/transformation_iq.c',
+        'Application/Src/foc_iq.c',
+        'Application/Src/identification_iq.c',
+        'Application/Src/mtpa_iq.c',
+        'Sensorless/Src/leso_iq.c',
+        'Sensorless/Src/hf_injection_iq.c',
+        'Sensorless/Src/flying_iq.c'
+    )
     Invoke-HostTest -Name 'foc_iq_host_test' `
         -Definitions @('MC_NUMERIC_IQMATH=1', 'GLOBAL_Q=24', 'MATH_TYPE=0') `
         -Includes @('Tests/iqmath_mock', 'Utils/Inc', 'Application/Inc',
                     'Sensorless/Inc') `
-        -Sources @(
-            'Tests/foc_iq_host_test.c',
-            'Utils/Src/mc_math.c',
-            'Utils/Src/filter_iq.c',
-            'Utils/Src/pid_iq.c',
-            'Utils/Src/pll_iq.c',
-            'Utils/Src/signal_iq.c',
-            'Utils/Src/transformation_iq.c',
-            'Application/Src/foc_iq.c',
-            'Application/Src/identification_iq.c',
-            'Application/Src/mtpa_iq.c',
-            'Sensorless/Src/leso_iq.c',
-            'Sensorless/Src/hf_injection_iq.c',
-            'Sensorless/Src/flying_iq.c'
-        )
+        -Sources (@('Tests/foc_iq_host_test.c') + $focSources)
+
+    Invoke-HostTest -Name 'fixed_gateway_mode_host_test' `
+        -Definitions @('MC_NUMERIC_IQMATH=1', 'GLOBAL_Q=24', 'MATH_TYPE=0') `
+        -Includes @('Tests/iqmath_mock', 'Utils/Inc', 'Application/Inc',
+                    'Sensorless/Inc') `
+        -Sources (@('Tests/fixed_gateway_mode_host_test.c',
+                    'Application/Src/fixed_control_gateway.c') + $focSources)
+
+    Invoke-HostTest -Name 'telemetry_monitor_host_test' `
+        -Definitions @('MC_NUMERIC_IQMATH=1') `
+        -Includes @('Utils/Inc') `
+        -Sources @('Tests/telemetry_monitor_host_test.c',
+                   'Utils/Src/telemetry_monitor.c')
 
     $identificationSources = @(
         'Tests/identification_iq_host_test.c',

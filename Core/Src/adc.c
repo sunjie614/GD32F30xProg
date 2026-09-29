@@ -26,6 +26,37 @@ void Adc_Calibrate_CurrentOffset(void) {
     }
 }
 
+#if defined(MC_NUMERIC_IQMATH)
+bool Adc_Calibrate_CurrentOffsetChecked(void) {
+    /* TIM0 is running with MOE disabled. Only count complete, distinct
+     * injected ADC groups; never calibrate from a stale power-on register. */
+    enum { SAMPLE_COUNT = 128U };
+    const uint32_t timeout_ticks = SystemCoreClock / 100U;
+    uint32_t sums[3] = {0U, 0U, 0U};
+    for (uint32_t sample = 0U; sample < SAMPLE_COUNT; ++sample) {
+        adc_flag_clear(ADC0, ADC_FLAG_EOIC);
+        uint32_t start_tick = DWT->CYCCNT;
+        while (adc_flag_get(ADC0, ADC_FLAG_EOIC) == RESET) {
+            if ((uint32_t)(DWT->CYCCNT - start_tick) >= timeout_ticks)
+                return false;
+        }
+        uint32_t raw[3] = {
+            ADC_IDATA0(ADC0) & 0xFFFFU,
+            ADC_IDATA1(ADC0) & 0xFFFFU,
+            ADC_IDATA2(ADC0) & 0xFFFFU};
+        for (uint32_t phase = 0U; phase < 3U; ++phase) {
+            if (raw[phase] > 4095U)
+                return false;
+            sums[phase] += raw[phase];
+        }
+    }
+    adc_ch0_offset = (float)sums[0] / (float)SAMPLE_COUNT;
+    adc_ch1_offset = (float)sums[1] / (float)SAMPLE_COUNT;
+    adc_ch2_offset = (float)sums[2] / (float)SAMPLE_COUNT;
+    return true;
+}
+#endif
+
 void Adc_Get_ThreePhaseCurrent(float* Ia, float* Ib, float* Ic) {
     // 读取注入通道数据
     float adc_value_ch0 = (float)(ADC_IDATA0(ADC0) & 0xFFFF);

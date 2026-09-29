@@ -10,6 +10,7 @@ if(NUMERIC_BACKEND STREQUAL "IQMATH")
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/pll_iq.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/signal_iq.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/transformation_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/telemetry_monitor.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/buffer.c
     )
 else()

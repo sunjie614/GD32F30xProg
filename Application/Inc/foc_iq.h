@@ -70,6 +70,10 @@ typedef struct
     mc_real_t current_q_minimum_pu;
     mc_real_t current_q_maximum_pu;
     mc_real_t current_q_integral_limit_pu;
+    IdentificationIqConfig_t identification_config;
+    bool identification_start_rs;
+    bool identification_start_axis;
+    bool identification_injection_enable;
 } FocIqParameters_t;
 
 typedef struct

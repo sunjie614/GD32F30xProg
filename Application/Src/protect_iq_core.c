@@ -48,8 +48,8 @@ bool ProtectIq_RunPhaseCurrent(ProtectIqState_t* state,
             state->average_overcurrent_count = 0U;
         }
     }
-    else
-        state->average_overcurrent_count = 0U;
+    /* The legacy protection accumulates over-threshold samples even when
+     * normal samples occur between them. Only a trip resets this count. */
     if (a > state->config.current_max_pu
         || b > state->config.current_max_pu
         || c > state->config.current_max_pu)

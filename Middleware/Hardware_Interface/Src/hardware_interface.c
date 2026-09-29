@@ -15,7 +15,7 @@
 #include "usart.h"
 
 static volatile uint16_t Stop           = 0x0001U;
-static bool              Software_BRK   = false;
+static volatile bool     Software_BRK   = false;
 static volatile bool     usart_dma_busy = false;
 volatile float           Breke_Duty     = 1.0F;
 
@@ -103,12 +103,36 @@ bool Peripheral_Update_Break(void)
     if (Stop)
     {
         // 软件触发 BRK
+#if defined(MC_NUMERIC_IQMATH)
+        /* One break event is enough while stopped. Re-triggering on every
+         * 5 kHz control cycle can starve the ADC interrupt. */
+        if (!Software_BRK)
+        {
+            Software_BRK = true;
+            TIMER_SWEVG(TIMER0) |= TIMER_SWEVG_BRKG;
+        }
+#else
         Software_BRK = true;
         TIMER_SWEVG(TIMER0) |= TIMER_SWEVG_BRKG;
+#endif
     }
     else
     {
         // Stop = 0，尝试恢复
+#if defined(MC_NUMERIC_IQMATH)
+        /* EXTI4 uses PE4 falling edge as an external stop. Do not re-arm
+         * MOE while that input remains low, even if CCP writes Stop = 0. */
+        if (gpio_input_bit_get(GPIOE, GPIO_PIN_4) != SET)
+        {
+            Stop = 1;
+            if (!Software_BRK)
+            {
+                Software_BRK = true;
+                TIMER_SWEVG(TIMER0) |= TIMER_SWEVG_BRKG;
+            }
+            return true;
+        }
+#endif
         if (gpio_input_bit_get(GPIOE, GPIO_PIN_15) == SET)
         {
             Software_BRK = false;

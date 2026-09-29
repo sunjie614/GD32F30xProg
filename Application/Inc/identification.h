@@ -154,6 +154,10 @@ typedef struct
   bool Initialized;       // 是否已初始化
 } FluxExperiment_t;
 
+/* A2L-visible experiment object.  FLOAT_REF and IQMATH each provide exactly
+ * one definition in their selected gateway/integration source. */
+extern FluxExperiment_t Experiment;
+
 void Experiment_Step(FluxExperiment_t* exp, float Id, float Iq, float* Ud, float* Uq);
 void Experiment_Init(FluxExperiment_t* exp, float Ts, int sample_capacity, int repeat_times,
                      int max_steps, int start_I, int final_I, int step_dir, float inject_amp);

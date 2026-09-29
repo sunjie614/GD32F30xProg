@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "foc_iq.h"
+#include "fixed_numeric_config.h"
 
 static unsigned Failures;
 
@@ -54,6 +55,19 @@ int main(void)
                               && output.pwm_duty.b <= MC_ONE);
     expect_true("vf duty c", output.pwm_duty.c >= MC_ZERO
                               && output.pwm_duty.c <= MC_ONE);
+    input.bus_voltage_pu = MC_CONST(80.0F / MC_VOLTAGE_BASE_V);
+    FocIq_Run(&state, &parameters, &input, &output);
+    expect_true("legacy low-bus neutral pwm",
+                output.pwm_duty.a == MC_HALF
+                && output.pwm_duty.b == MC_HALF
+                && output.pwm_duty.c == MC_HALF);
+    input.bus_voltage_pu = MC_CONST(120.0F / MC_VOLTAGE_BASE_V);
+    FocIq_Run(&state, &parameters, &input, &output);
+    expect_true("legacy normal-bus modulation",
+                output.pwm_duty.a != MC_HALF
+                || output.pwm_duty.b != MC_HALF
+                || output.pwm_duty.c != MC_HALF);
+    input.bus_voltage_pu = MC_CONST(0.5);
 
     parameters.mode = IDENTIFY;
     parameters.reset = true;

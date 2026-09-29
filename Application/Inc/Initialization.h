@@ -9,6 +9,7 @@
 #define INITIALIZATION_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /*********************************************************************/
 /*                        函数声明                                    */
@@ -36,5 +37,12 @@ bool Initialization_MTPA(void);
  * @retval false - 初始化失败
  */
 bool Initialization_Drivers(void);
+
+#if defined(MC_NUMERIC_IQMATH)
+/* Arm the break IRQ once the DC bus reaches the legacy 200 V threshold. */
+void Initialization_ArmHardwareProtectIfReady(void);
+extern volatile uint16_t FixedStartup_Status;
+extern volatile bool FixedBreakIrqArmed;
+#endif
 
 #endif /* INITIALIZATION_H */

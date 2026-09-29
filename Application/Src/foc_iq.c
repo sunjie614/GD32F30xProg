@@ -17,7 +17,9 @@ static PhaseIq_t foc_iq_neutral_pwm(void)
 static PhaseIq_t foc_iq_svpwm(ClarkIq_t voltage, mc_real_t bus_voltage_pu)
 {
     PhaseIq_t duty = foc_iq_neutral_pwm();
-    if (bus_voltage_pu <= MC_CONST(0.025))
+    /* Legacy Adc_Get_VoltageBusInv() suppresses modulation below 100 V.
+     * Preserve that hardware-side boundary after per-unit conversion. */
+    if (bus_voltage_pu < MC_CONST(100.0F / MC_VOLTAGE_BASE_V))
         return duty;
 
     mc_real_t inverse_bus = McMath_Div(MC_ONE, bus_voltage_pu);
@@ -160,6 +162,7 @@ void FocIq_DefaultParameters(FocIqParameters_t* parameters)
             PID_CURRENT_Q_LOOP_MAX_OUTPUT / MC_VOLTAGE_BASE_V),
         .current_q_integral_limit_pu = MC_CONST(
             PID_CURRENT_Q_LOOP_INTEGRAL_LIMIT / MC_VOLTAGE_BASE_V)};
+    IdentificationIq_DefaultConfig(&parameters->identification_config);
 }
 
 static void foc_iq_apply_pid_parameters(FocIqState_t* state,
@@ -326,7 +329,8 @@ static void foc_iq_handle_mode_change(FocIqState_t* state,
     if (mode == IDENTIFY)
     {
         IdentificationIq_Reset(&state->identification);
-        IdentificationIq_Start(&state->identification);
+        if (!state->identification.config.manual_control)
+            IdentificationIq_Start(&state->identification);
     }
 }
 
@@ -338,7 +342,8 @@ static void foc_iq_handle_reset_release(FocIqState_t* state)
         state->startup_count = 0U;
     }
     else if (state->mode == IDENTIFY
-             && state->identification.state == IDENTIFICATION_IQ_WAIT)
+             && state->identification.state == IDENTIFICATION_IQ_WAIT
+             && !state->identification.config.manual_control)
         IdentificationIq_Start(&state->identification);
 }
 
@@ -503,6 +508,7 @@ void FocIq_Run(FocIqState_t* state,
         return;
     }
     foc_iq_apply_pid_parameters(state, parameters);
+    state->identification.config = parameters->identification_config;
     FocMode_t requested_mode = state->mtpa_rebuild_in_progress
                              ? IDLE : parameters->mode;
     foc_iq_handle_mode_change(state, requested_mode,
@@ -553,6 +559,9 @@ void FocIq_Run(FocIqState_t* state,
         IdentificationIqInput_t identification_input = {
             .current_d_pu = state->current_dq_pu.d,
             .current_q_pu = state->current_dq_pu.q,
+            .start_rs = parameters->identification_start_rs,
+            .start_axis = parameters->identification_start_axis,
+            .injection_enable = parameters->identification_injection_enable,
             .reset = reset};
         IdentificationIqOutput_t identification_output = {0};
         IdentificationIq_Run(&state->identification,
@@ -606,7 +615,8 @@ void FocIq_Run(FocIqState_t* state,
                             ? hfi_output.angle_pu : leso_output.angle_pu,
         .estimated_speed_pu = state->using_hfi
                             ? hfi_output.speed_pu : leso_output.speed_pu,
-        .requested_mode = state->identification.state == IDENTIFICATION_IQ_DONE
+        .requested_mode = (state->identification.state == IDENTIFICATION_IQ_DONE
+                        || state->identification.state == IDENTIFICATION_IQ_FAILED)
                         ? IDLE : state->mode,
         .identification_state = state->identification.state,
         .identification_error = state->identification.error,
