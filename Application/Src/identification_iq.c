@@ -90,7 +90,8 @@ void IdentificationIq_Init(IdentificationIqState_t* state,
         return;
     }
     state->state = IDENTIFICATION_IQ_WAIT;
-    state->current_target_pu = state->config.current_start_pu;
+    state->current_target_pu = state->config.manual_control
+                             ? MC_ZERO : state->config.current_start_pu;
     state->rs_voltage_pu = state->config.rs_voltage_step_pu;
     state->rs_first_sample = true;
 }
@@ -566,7 +567,7 @@ static bool identification_fit_manual_axis(IdentificationIqState_t* state)
     }
     state->step_index = 0U;
     state->repeat_count = 0U;
-    state->current_target_pu = state->config.current_start_pu;
+    state->current_target_pu = MC_ZERO;
     state->point_started = false;
     identification_reset_capture(state);
     state->state = IDENTIFICATION_IQ_PENDING;
@@ -604,7 +605,7 @@ static void identification_run_manual(IdentificationIqState_t* state,
         {
             state->rs_complete = true;
             state->injection_mode = IDENTIFICATION_IQ_INJECT_D;
-            state->current_target_pu = state->config.current_start_pu;
+            state->current_target_pu = MC_ZERO;
             state->point_started = false;
             state->state = IDENTIFICATION_IQ_WAIT;
             output->voltage_d_pu = MC_ZERO;
@@ -678,6 +679,7 @@ static void identification_run_manual(IdentificationIqState_t* state,
         }
         break;
     case IDENTIFICATION_IQ_PENDING:
+        state->current_target_pu = state->config.current_start_pu;
         identification_reset_capture(state);
         state->point_started = false;
         state->state = IDENTIFICATION_IQ_INJECT_COLLECT;

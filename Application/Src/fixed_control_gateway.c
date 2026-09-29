@@ -410,7 +410,10 @@ static void gateway_write_telemetry(const FocIqState_t* state,
         return;
     bool injection_mode_changed = (uint32_t)Experiment.inj.mode
                                != (uint32_t)state->identification.injection_mode;
-    if (injection_mode_changed)
+    bool rs_just_completed = Experiment.state == EST_RS
+                          && value->identification_state == IDENTIFICATION_IQ_WAIT
+                          && state->identification.rs_complete;
+    if (injection_mode_changed || rs_just_completed)
     {
         /* The original PENDING state clears both amplitudes before Q and DQ.
          * Keep that manual safety gate: the operator must enter the next

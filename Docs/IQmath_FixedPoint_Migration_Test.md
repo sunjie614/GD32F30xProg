@@ -56,7 +56,7 @@
 | SW-16 | 从本轮 IQMATH ELF 生成 A2L | `Foc_Mode` 英文枚举、`Stop`、启动诊断可搜索 | `Foc_Mode` 使用 `FocMode_t`；`Stop`、`FixedStartup_Status`、`FixedBreakIrqArmed` 均存在 | 通过 |
 | SW-17 | 原版辨识 A2L 操作兼容回归 | `Experiment.*` 物理量可驱动 Q24；每个新电流点人工放行；D→Q→DQ 完整；失败退出 | FLOAT_REF/Q24 模拟、网关转换和失败停机判据均通过 | 通过 |
 
-当前 IQMATH 固件资源：Flash 81,092 B（30.93%），RAM 35,208 B（71.63%）。FLOAT_REF 固件资源：Flash 45,464 B（17.34%），RAM 20,520 B（41.75%）。RAM 已包含链接脚本预留的 1 KiB heap 和 2 KiB stack，也包含固定长度辨识采样缓冲区、后台 MTPA 暂存表及旧 A2L 浮点镜像；IQMATH 辨识累计使用 64 位整数。性能只记录，不设提速通过门槛。
+当前 IQMATH 固件资源：Flash 81,228 B（30.99%），RAM 35,208 B（71.63%）。FLOAT_REF 固件资源：Flash 45,464 B（17.34%），RAM 20,520 B（41.75%）。RAM 已包含链接脚本预留的 1 KiB heap 和 2 KiB stack，也包含固定长度辨识采样缓冲区、后台 MTPA 暂存表及旧 A2L 浮点镜像；IQMATH 辨识累计使用 64 位整数。性能只记录，不设提速通过门槛。
 
 主机对照的 MTPA 第 25/50 点最大满量程误差约 0.012%；模拟辨识的 `ad0/add/aq0/aqq/adq` 最大相对偏差约 0.043%。这些结果验证软件定点路径和参考路径的一致性，不代替目标电机实测。
 
