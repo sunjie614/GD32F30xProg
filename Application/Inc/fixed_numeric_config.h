@@ -4,7 +4,9 @@
 /* Project numeric contract.  These are application-selected physical bases,
  * not constants supplied by IQmath.  Runtime algorithm state is normalized
  * against these values and stored as signed Q24. */
-#define MC_CURRENT_BASE_A       (30.0F)
+/* Whole-ampere scans need the same base as an integer constant expression. */
+#define MC_CURRENT_BASE_A_INTEGER (30)
+#define MC_CURRENT_BASE_A       (MC_CURRENT_BASE_A_INTEGER * 1.0F)
 #define MC_VOLTAGE_BASE_V       (800.0F)
 #define MC_SPEED_BASE_RPM       (1800.0F)
 #define MC_TORQUE_BASE_NM       (50.0F)

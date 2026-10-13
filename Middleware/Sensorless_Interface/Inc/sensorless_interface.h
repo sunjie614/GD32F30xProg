@@ -25,11 +25,7 @@ extern "C" {
 /**
  * @brief 无传感器控制方法枚举
  */
-typedef enum {
-    FLYING       = 0, /*!< 无传感器控制初始辨识 */
-    LES_OBSERVER = 1, /*!< 线性扩张状态观测器 */
-    HF_INJECTION = 2, /*!< 高频注入 */
-} sensorless_method_t;
+#include "sensorless_mode.h"
 
 /**
  * @brief 无传感器控制状态枚举

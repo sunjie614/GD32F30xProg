@@ -47,6 +47,11 @@ typedef struct
 void HfiIq_DefaultConfig(HfiIqConfig_t* config);
 void HfiIq_Init(HfiIqState_t* state, const HfiIqConfig_t* config);
 void HfiIq_Reset(HfiIqState_t* state, mc_real_t initial_angle_pu);
+/* Preserve the original three call sites: filter current before position,
+ * calculate the detector after FOC, flip polarity only when injecting. */
+ClarkIq_t HfiIq_ProcessCurrent(HfiIqState_t* state, ClarkIq_t current);
+ParkIq_t HfiIq_InjectVoltage(HfiIqState_t* state,
+                            const HfiIqConfig_t* config, bool reset);
 void HfiIq_Run(HfiIqState_t* state,
                const HfiIqConfig_t* config,
                const HfiIqInput_t* input,

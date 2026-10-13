@@ -7,7 +7,7 @@ void FlyingIq_Init(FlyingIqState_t* state, uint16_t startup_delay)
     if (state == NULL)
         return;
     *state = (FlyingIqState_t){
-        .startup_delay = startup_delay == 0U ? 1U : startup_delay};
+        .startup_delay = startup_delay == 0U ? 8U : startup_delay};
 }
 
 void FlyingIq_Reset(FlyingIqState_t* state)
@@ -22,17 +22,18 @@ void FlyingIq_SetEnabled(FlyingIqState_t* state, bool enabled)
 {
     if (state == NULL)
         return;
-    if (state->enabled == enabled)
-        return;
     state->enabled = enabled;
-    FlyingIq_Reset(state);
+    if (enabled)
+        FlyingIq_Reset(state);
 }
 
 void FlyingIq_Run(FlyingIqState_t* state, bool reset)
 {
     if (state == NULL)
         return;
-    if (reset || !state->enabled)
+    /* Legacy Flying_Update is an eight-cycle wait; there is no search and
+     * no enabled gate. FLYING=0 never forms a meaningful bit mask. */
+    if (reset)
     {
         FlyingIq_Reset(state);
         return;

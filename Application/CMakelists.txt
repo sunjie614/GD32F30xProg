@@ -2,6 +2,9 @@
 if(NUMERIC_BACKEND STREQUAL "IQMATH")
     set(User_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/fixed_control_gateway.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/fixed_debug_gateway.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/sensorless_iq_gateway.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/main_int_iq_mode.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/foc_iq.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/identification_iq.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/mtpa_iq.c

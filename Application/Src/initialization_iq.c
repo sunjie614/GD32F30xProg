@@ -24,6 +24,7 @@ volatile uint32_t DWT_Count = 0U;
  * 3: initialized. A failed startup leaves PWM MOE disabled. */
 volatile uint16_t FixedStartup_Status = 0U;
 volatile bool FixedBreakIrqArmed = false;
+volatile uint32_t FixedHardwareFaultEvents = 0U;
 
 static const SystemTimeConfig_t Fixed_SystemTime = {
     .current = {.val = MAIN_LOOP_TIME, .inv = MAIN_LOOP_FREQ},
@@ -129,8 +130,10 @@ bool Initialization_Drivers(void)
     Can_Initialization();
     gpio_bit_set(SOFT_OPEN_PORT, SOFT_OPEN_PIN);
     fixed_init_exti();
-    fixed_init_nvic();
+    /* CAN is ready; finish CCP state before the first ADC control interrupt
+     * can preempt startup. GPIO, PWM and protection ordering is unchanged. */
     Com_Initialization();
+    fixed_init_nvic();
     FixedStartup_Status = 3U;
     return true;
 }
@@ -139,9 +142,17 @@ void Initialization_ArmHardwareProtectIfReady(void)
 {
     /* Startup may occur with an uncharged DC bus. Never re-enable after a
      * hardware-fault ISR has deliberately disabled the break interrupt. */
-    if (!FixedBreakIrqArmed && Adc_Get_VoltageBus() > 200.0F)
+    if (FixedBreakIrqArmed || !(Adc_Get_VoltageBus() > 200.0F))
+        return;
+    uint32_t interrupt_state = __get_PRIMASK();
+    __disable_irq();
+    /* Recheck after reading Udc: a BRK fault may have preempted the first
+     * check and disabled its IRQ. Never undo that action in the background. */
+    if (!FixedBreakIrqArmed)
     {
         Peripheral_EnableHardwareProtect();
         FixedBreakIrqArmed = true;
     }
+    if (interrupt_state == 0U)
+        __enable_irq();
 }

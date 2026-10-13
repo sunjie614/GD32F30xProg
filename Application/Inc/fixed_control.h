@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "foc_iq.h"
+#include "sensorless_iq_gateway.h"
 #include "transformation.h"
 
 #ifdef __cplusplus
@@ -47,10 +48,25 @@ typedef struct
     FocIqState_t foc;
     FocIqParameters_t parameters;
     FocMode_t gateway_previous_mode;
+    float gateway_speed_ramp_slope;
+    SensorlessGatewayState_t sensorless_gateway;
+    A2lPidMirror_t gateway_pid_cache[3];
+    float gateway_ramp_minimum, gateway_ramp_maximum;
     bool initialized;
 } FixedControlState_t;
 
+typedef struct
+{
+    volatile float value;
+    volatile float slope; /* rpm/s, writable physical-unit input */
+    volatile float limit_min, limit_max;
+    volatile float target, Ts;
+} A2lRampMirror_t;
+extern volatile A2lRampMirror_t Foc_Ramp_Speed_Handler;
+
 void FixedControl_Init(FixedControlState_t* state);
+/* Explicit warm INIT: the caller must previously have called Init. */
+void FixedControl_Reinitialize(FixedControlState_t* state);
 void FixedControl_Reset(FixedControlState_t* state);
 FixedControlOutput_t FixedControl_Step(FixedControlState_t* state,
                                       const FixedControlInput_t* input);
@@ -73,13 +89,14 @@ extern volatile float Foc_Iq_Fdbk;
 extern volatile float Foc_Ud_Ref;
 extern volatile float Foc_Uq_Ref;
 extern volatile bool MainInt_UseRealTheta;
-extern volatile uint16_t Sensorless_Method;
 extern volatile uint32_t FixedControl_CycleCount;
 extern volatile FixedControlSelfTest_t FixedControl_SelfTest;
 extern volatile float Identification_Voltage;
 extern volatile float Identification_Rs;
 extern volatile uint16_t Identification_State;
 extern volatile uint16_t Identification_Error;
+/* Observation only: writing this mirror never selects the control path. */
+extern volatile bool Mtpa_LinearFallback;
 
 #ifdef __cplusplus
 }

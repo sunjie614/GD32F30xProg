@@ -8,6 +8,7 @@
 #include "hf_injection_iq.h"
 #include "identification_iq.h"
 #include "leso_iq.h"
+#include "sensorless_iq.h"
 #include "mtpa_iq.h"
 #include "pid_iq.h"
 #include "signal_iq.h"
@@ -26,12 +27,17 @@ typedef struct
     uint16_t startup_hold_cycles;
     uint16_t flying_startup_delay;
     mc_real_t speed_ramp_step_pu;
+    mc_real_t speed_ramp_minimum_pu;
+    mc_real_t speed_ramp_maximum_pu;
+    mc_real_t speed_q_voltage_limit_pu;
     mc_real_t sensorless_switch_speed_pu;
     mc_real_t sensorless_hysteresis_pu;
     mc_real_t startup_voltage_d_pu;
+    ParkIq_t mtpa_fallback_inductance_dq_pu; /* Configured nominal L, not fitted L. */
     SpeedPidScheduleIqConfig_t speed_schedule;
     LesoIqConfig_t leso;
     HfiIqConfig_t hfi;
+    SensorlessIqConfig_t sensorless;
 } FocIqConfig_t;
 
 /* A complete parameter snapshot is supplied once per control cycle by the
@@ -44,6 +50,7 @@ typedef struct
     bool startup_prepare_request;
     bool use_real_angle;
     uint16_t sensorless_method;
+    bool sensorless_enabled;
     mc_real_t speed_reference_pu;
     ParkIq_t vf_voltage_reference_pu;
     mc_real_t vf_frequency_step_pu;
@@ -116,6 +123,12 @@ typedef struct
     bool startup_request_latched;
     bool using_hfi;
     bool reset_previous;
+    /* Legacy VF/IF share one sawtooth counter, while each mode owns its
+     * previous Reset/sweep/held-phase memory. SPEED has its own Reset edge. */
+    bool vf_reset_previous;
+    bool if_reset_previous;
+    bool speed_reset_previous;
+    mc_real_t shared_phase_pu;
     RampIqState_t speed_ramp;
     PhaseGeneratorIqState_t vf_phase;
     PhaseGeneratorIqState_t if_phase;
@@ -130,23 +143,29 @@ typedef struct
     LesoIqState_t leso;
     HfiIqState_t hfi;
     FlyingIqState_t flying;
+    SensorlessIqState_t sensorless;
     ClarkIq_t current_ab_pu;
     ParkIq_t current_dq_pu;
     ParkIq_t current_reference_dq_pu;
     ParkIq_t voltage_reference_dq_pu;
     ClarkIq_t voltage_reference_ab_pu;
     mc_real_t control_angle_pu;
+    ParkIq_t inductance_dq_pu; /* Last SPEED dispatch_current interpolation. */
     mc_real_t speed_feedback_pu;
     volatile bool mtpa_rebuild_pending;
     volatile bool mtpa_rebuild_in_progress;
     volatile bool mtpa_staging_ready;
     volatile bool mtpa_rebuild_failed;
+    bool mtpa_linear_fallback; /* Current SPEED reference uses Id=|Iq|. */
     bool initialized;
 } FocIqState_t;
 
 void FocIq_DefaultConfig(FocIqConfig_t* config);
 void FocIq_DefaultParameters(FocIqParameters_t* parameters);
 void FocIq_Init(FocIqState_t* state, const FocIqConfig_t* config);
+/* Runtime INIT for a previously initialized instance. Keep accepted MTPA and
+ * observer histories; cancel only uncommitted background table transactions. */
+void FocIq_Reinitialize(FocIqState_t* state);
 void FocIq_Reset(FocIqState_t* state, mc_real_t initial_angle_pu);
 void FocIq_Run(FocIqState_t* state,
                const FocIqParameters_t* parameters,

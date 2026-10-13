@@ -14,6 +14,7 @@ if(NUMERIC_BACKEND STREQUAL "IQMATH")
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/leso_iq.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/hf_injection_iq.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/flying_iq.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/sensorless_iq.c
     )
 else()
     add_library(Sensorless STATIC

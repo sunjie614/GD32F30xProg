@@ -43,6 +43,9 @@ bool Initialization_Drivers(void);
 void Initialization_ArmHardwareProtectIfReady(void);
 extern volatile uint16_t FixedStartup_Status;
 extern volatile bool FixedBreakIrqArmed;
+/* Integration-layer event sequence: INIT must not erase a new BRK fault
+ * that arrived while the stopped algorithm/ADC were being initialized. */
+extern volatile uint32_t FixedHardwareFaultEvents;
 #endif
 
 #endif /* INITIALIZATION_H */

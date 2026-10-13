@@ -50,6 +50,14 @@ typedef struct
     mc_real_t current_start_pu;
     mc_real_t current_final_pu;
     mc_real_t current_step_pu;
+    /* The legacy Experiment API specifies whole amperes. In this explicit
+     * mode, enumerate those integers exactly and quantize each target once.
+     * Otherwise the three *_pu fields are the exact represented endpoints:
+     * no epsilon or implicit rounding to an extra scan point is applied. */
+    bool integer_current_scan;
+    int32_t current_start_a;
+    int32_t current_final_a;
+    int32_t current_step_a;
     mc_real_t current_limit_pu;
     mc_real_t rs_current_target_pu;
     mc_real_t rs_threshold_pu;
@@ -107,6 +115,7 @@ typedef struct
     mc_real_t rs_previous_current_pu;
     mc_real_t rs_current_filtered_pu;
     mc_real_t current_target_pu;
+    int32_t current_target_a; /* Used only by integer_current_scan. */
     mc_real_t accumulated_flux;
     mc_real_t accumulated_current;
     uint32_t rs_hold_count;
@@ -127,6 +136,9 @@ typedef struct
     mc_accum_t dq_sum_residual_d_squared;
     mc_accum_t dq_sum_residual_q_squared;
     uint32_t dq_sample_count;
+    /* Voltage applied during the preceding sample interval. ADC feedback
+     * belongs to that interval, not to the command computed this cycle. */
+    mc_real_t last_voltage_d_pu, last_voltage_q_pu;
     bool single_axis_fit_complete;
     bool rs_first_sample;
     bool injection_positive;
@@ -159,6 +171,8 @@ typedef struct
 void IdentificationIq_DefaultConfig(IdentificationIqConfig_t* config);
 void IdentificationIq_Init(IdentificationIqState_t* state,
                            const IdentificationIqConfig_t* config);
+/* Logical reset: preserve config and inactive sample payload, clear all valid
+ * results/counts/accumulators. Only Init erases the complete sample storage. */
 void IdentificationIq_Reset(IdentificationIqState_t* state);
 void IdentificationIq_Start(IdentificationIqState_t* state);
 void IdentificationIq_Run(IdentificationIqState_t* state,

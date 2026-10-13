@@ -45,6 +45,28 @@ void HfiIq_Reset(HfiIqState_t* state, mc_real_t initial_angle_pu)
     PllIq_Reset(&state->pll, initial_angle_pu);
 }
 
+ClarkIq_t HfiIq_ProcessCurrent(HfiIqState_t* state, ClarkIq_t current)
+{
+    if (state == NULL)
+        return current;
+    state->base_current.a = McMath_Mul(
+        McMath_Add(current.a, state->previous_current.a), MC_HALF);
+    state->base_current.b = McMath_Mul(
+        McMath_Add(current.b, state->previous_current.b), MC_HALF);
+    ClarkIq_t high = {
+        McMath_Sub(current.a, state->base_current.a),
+        McMath_Sub(current.b, state->base_current.b)};
+    mc_real_t sign = state->injection_positive ? McMath_Neg(MC_ONE) : MC_ONE;
+    /* The old optional response IIR calls are commented out. */
+    state->response_current.a = McMath_Mul(
+        McMath_Sub(high.a, state->previous_high_frequency.a), sign);
+    state->response_current.b = McMath_Mul(
+        McMath_Sub(high.b, state->previous_high_frequency.b), sign);
+    state->previous_current = current;
+    state->previous_high_frequency = high;
+    return state->base_current;
+}
+
 void HfiIq_Run(HfiIqState_t* state,
                const HfiIqConfig_t* config,
                const HfiIqInput_t* input,
@@ -52,49 +74,42 @@ void HfiIq_Run(HfiIqState_t* state,
 {
     if (state == NULL || config == NULL || input == NULL || output == NULL)
         return;
-    if (input->reset)
-        HfiIq_Reset(state, state->pll.angle_pu);
-    PllIq_SetEnabled(&state->pll, state->enabled && !input->reset);
-
-    state->base_current.a = McMath_Mul(
-        McMath_Add(input->current_ab_pu.a, state->previous_current.a), MC_HALF);
-    state->base_current.b = McMath_Mul(
-        McMath_Add(input->current_ab_pu.b, state->previous_current.b), MC_HALF);
-    ClarkIq_t high = {
-        McMath_Sub(input->current_ab_pu.a, state->base_current.a),
-        McMath_Sub(input->current_ab_pu.b, state->base_current.b)};
-    mc_real_t sign = state->injection_positive ? McMath_Neg(MC_ONE) : MC_ONE;
-    state->response_current.a = Iir1Iq_Run(
-        &state->response_a_filter,
-        McMath_Mul(McMath_Sub(high.a, state->previous_high_frequency.a), sign));
-    state->response_current.b = Iir1Iq_Run(
-        &state->response_b_filter,
-        McMath_Mul(McMath_Sub(high.b, state->previous_high_frequency.b), sign));
-    state->previous_current = input->current_ab_pu;
-    state->previous_high_frequency = high;
-
-    mc_real_t sine = McMath_SinPu(state->pll.angle_pu);
-    mc_real_t cosine = McMath_CosPu(state->pll.angle_pu);
-    mc_real_t raw_error = McMath_Sub(
-        McMath_Mul(state->response_current.a, sine),
-        McMath_Mul(state->response_current.b, cosine));
-    mc_real_t norm = McMath_Sqrt(McMath_Add(
-        McMath_Mul(state->response_current.a, state->response_current.a),
-        McMath_Mul(state->response_current.b, state->response_current.b)));
-    state->phase_error_pu = norm > MC_CONST(0.0001)
-                          ? McMath_Div(raw_error, norm) : MC_ZERO;
-    PllIq_Run(&state->pll, state->phase_error_pu);
-
-    state->injection_positive = !state->injection_positive;
-    ParkIq_t injection = {0};
+    state->pll.enabled = false; /* local PLL is a compatibility view only */
     if (state->enabled && !input->reset)
-        injection.d = state->injection_positive
-                    ? config->injection_voltage_pu
-                    : McMath_Neg(config->injection_voltage_pu);
+    {
+        mc_real_t sine = McMath_SinPu(state->pll.angle_pu);
+        mc_real_t cosine = McMath_CosPu(state->pll.angle_pu);
+        mc_real_t ma = McMath_Abs(state->response_current.a);
+        mc_real_t mb = McMath_Abs(state->response_current.b);
+        mc_real_t scale = ma > mb ? ma : mb;
+        state->phase_error_pu = MC_ZERO;
+        if (scale > MC_ZERO)
+        {
+            mc_real_t a = McMath_Div(state->response_current.a, scale);
+            mc_real_t b = McMath_Div(state->response_current.b, scale);
+            mc_real_t norm = McMath_Sqrt(McMath_Add(McMath_Mul(a, a), McMath_Mul(b, b)));
+            if (McMath_Mul(scale, norm) > MC_CONST(0.0001 / MC_CURRENT_BASE_A))
+                state->phase_error_pu = McMath_Div(McMath_Sub(
+                    McMath_Mul(a, sine), McMath_Mul(b, cosine)), norm);
+        }
+    }
+
     *output = (HfiIqOutput_t){
         .filtered_current_ab_pu = state->base_current,
-        .injection_voltage_dq_pu = injection,
+        .injection_voltage_dq_pu = {0},
         .angle_pu = state->pll.angle_pu,
         .speed_pu = state->pll.speed_pu,
         .phase_error_pu = state->phase_error_pu};
+}
+
+ParkIq_t HfiIq_InjectVoltage(HfiIqState_t* state,
+                            const HfiIqConfig_t* config, bool reset)
+{
+    ParkIq_t injection = {0};
+    if (state == NULL || config == NULL || !state->enabled || reset)
+        return injection;
+    state->injection_positive = !state->injection_positive;
+    injection.d = state->injection_positive ? config->injection_voltage_pu
+                                            : McMath_Neg(config->injection_voltage_pu);
+    return injection;
 }

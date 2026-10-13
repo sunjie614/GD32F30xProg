@@ -1,28 +1,16 @@
 #include "fixed_control.h"
 
 #include <stddef.h>
+#include <math.h>
+#include "fixed_debug_gateway.h"
 #include "fixed_numeric_config.h"
 #include "identification.h"
+#include "main_int.h"
 #include "parameters.h"
 
 /* These floating-point objects are CAN/CCP/A2L compatibility registers only.
  * They are sampled into a fixed-point snapshot at the ISR boundary and are
  * never read by the algorithm core. */
-typedef struct
-{
-    volatile float Kp;
-    volatile float Ki;
-    volatile float Kd;
-    volatile float integral;
-    volatile float previous_error;
-    volatile float MaxOutput;
-    volatile float MinOutput;
-    volatile float output;
-    volatile float IntegralLimit;
-    volatile float Ts;
-    volatile bool Reset;
-} A2lPidMirror_t;
-
 typedef struct
 {
     volatile Park_t vol_ref;
@@ -45,6 +33,9 @@ volatile bool Foc_StartupPrepareRequest = false;
 volatile float Foc_Speed_Ref = 0.0F;
 volatile float Foc_Speed_Ramp = 0.0F;
 volatile float Foc_Speed_Fdbk = 0.0F;
+volatile A2lRampMirror_t Foc_Ramp_Speed_Handler = {
+    .slope = RAMP_SPEED_SLOPE, .limit_min = RAMP_SPEED_LIMIT_MIN,
+    .limit_max = RAMP_SPEED_LIMIT_MAX, .Ts = SPEED_LOOP_TIME};
 volatile float Foc_Theta = 0.0F;
 volatile float Foc_BusVoltage = 0.0F;
 volatile float Foc_BusVoltage_Inv = 0.0F;
@@ -59,7 +50,6 @@ volatile float Foc_Current_Freq = MAIN_LOOP_FREQ;
 volatile float Foc_Speed_Ts = SPEED_LOOP_TIME;
 volatile float Foc_Speed_Freq = SPEED_LOOP_FREQ;
 volatile bool MainInt_UseRealTheta = true;
-volatile uint16_t Sensorless_Method = 0U;
 volatile uint32_t FixedControl_CycleCount = 0U;
 volatile FixedControlSelfTest_t FixedControl_SelfTest = {0};
 volatile Park_t Foc_Idq_Ref = {0};
@@ -87,6 +77,7 @@ volatile A2lPidMirror_t Foc_Pid_CurQ_Handler = {
     .MinOutput = PID_CURRENT_Q_LOOP_MIN_OUTPUT,
     .IntegralLimit = PID_CURRENT_Q_LOOP_INTEGRAL_LIMIT,
     .Ts = MAIN_LOOP_TIME, .Reset = true};
+volatile A2lPidMirror_t Foc_Pid_Speed_Effective = {0};
 volatile A2lVfMirror_t Foc_VfParam = {0};
 volatile A2lIfMirror_t Foc_IfParam = {0};
 /* Legacy flat aliases remain searchable; the structured fields are writable
@@ -110,10 +101,49 @@ volatile bool Sensorless_UsingHfi = false;
 volatile bool Mtpa_TableValid = false;
 volatile bool Mtpa_RebuildPending = false;
 volatile bool Mtpa_RebuildFailed = false;
+volatile bool Mtpa_LinearFallback = false;
+/* Legacy Rs process names: observations of the explicit experiment state. */
+volatile float I_filtered = 0.0F, I_last = 0.0F;
+volatile float V_last = 0.0F, V_now = 0.0F;
+volatile uint8_t done_flag = 0U;
 
 static mc_real_t gateway_from_physical(float value, float base)
 {
     return base == 0.0F ? MC_ZERO : McMath_FromFloat(value / base);
+}
+
+static void gateway_validate_pid(volatile A2lPidMirror_t* mirror,
+                                  A2lPidMirror_t* accepted,
+                                  float gain_scale, float output_base, float ts)
+{
+    bool valid = isfinite(mirror->Kp) && mirror->Kp >= 0.0F
+        && mirror->Kp * gain_scale < 128.0F
+        && isfinite(mirror->Ki) && mirror->Ki >= 0.0F
+        && mirror->Ki * ts * gain_scale < 128.0F
+        && isfinite(mirror->Kd) && mirror->Kd >= 0.0F
+        && mirror->Kd / ts * gain_scale < 128.0F
+        && isfinite(mirror->MinOutput) && isfinite(mirror->MaxOutput)
+        && mirror->MinOutput <= mirror->MaxOutput
+        && mirror->MinOutput / output_base > -128.0F
+        && mirror->MaxOutput / output_base < 128.0F
+        && isfinite(mirror->IntegralLimit) && mirror->IntegralLimit >= 0.0F
+        && mirror->IntegralLimit / output_base < 128.0F;
+    if (valid)
+    {
+        accepted->Kp = mirror->Kp; accepted->Ki = mirror->Ki;
+        accepted->Kd = mirror->Kd; accepted->MinOutput = mirror->MinOutput;
+        accepted->MaxOutput = mirror->MaxOutput;
+        accepted->IntegralLimit = mirror->IntegralLimit;
+    }
+    else
+    {
+        mirror->Kp = accepted->Kp; mirror->Ki = accepted->Ki;
+        mirror->Kd = accepted->Kd; mirror->MinOutput = accepted->MinOutput;
+        mirror->MaxOutput = accepted->MaxOutput;
+        mirror->IntegralLimit = accepted->IntegralLimit;
+        McMath_Diagnostics.invalid_input_count++;
+    }
+    mirror->Ts = ts;
 }
 
 static float gateway_to_physical(mc_real_t value, float base)
@@ -174,6 +204,54 @@ static float gateway_accum_to_physical(mc_accum_t value, float scale)
 #endif
 }
 
+static void gateway_publish_identification_process(const IdentificationIqState_t* state)
+{
+    I_filtered = gateway_to_physical(state->rs_current_filtered_pu, MC_CURRENT_BASE_A);
+    I_last = gateway_to_physical(state->rs_previous_current_pu, MC_CURRENT_BASE_A);
+    V_last = gateway_to_physical(state->rs_previous_voltage_pu, MC_VOLTAGE_BASE_V);
+    V_now = gateway_to_physical(state->rs_voltage_pu, MC_VOLTAGE_BASE_V);
+    done_flag = state->rs_complete ? 1U : 0U;
+    Experiment.last_Vd = gateway_to_physical(state->last_voltage_d_pu, MC_VOLTAGE_BASE_V);
+    Experiment.last_Vq = gateway_to_physical(state->last_voltage_q_pu, MC_VOLTAGE_BASE_V);
+    Experiment.sum_id = gateway_accum_to_physical(state->dq_sum_id, MC_CURRENT_BASE_A);
+    Experiment.sum_iq = gateway_accum_to_physical(state->dq_sum_iq, MC_CURRENT_BASE_A);
+    Experiment.sum_id2 = gateway_accum_to_physical(state->dq_sum_id_squared,
+        MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+    Experiment.sum_iq2 = gateway_accum_to_physical(state->dq_sum_iq_squared,
+        MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+    Experiment.sum_eps_id2 = gateway_accum_to_physical(state->dq_sum_residual_d_squared,
+        MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+    Experiment.sum_eps_iq2 = gateway_accum_to_physical(state->dq_sum_residual_q_squared,
+        MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+#if defined(MC_NUMERIC_IQMATH)
+    /* Matrix products are Q48, unlike the Q24 current/residual sums above. */
+    const float q48_scale = 1.0F / 281474976710656.0F;
+    Experiment.cq_Sxx = (float)state->dq_sum_xx * q48_scale;
+    Experiment.cq_Sxy = (float)state->dq_sum_xy * q48_scale * MC_CURRENT_BASE_A;
+#else
+    Experiment.cq_Sxx = (float)state->dq_sum_xx;
+    Experiment.cq_Sxy = (float)state->dq_sum_xy * MC_CURRENT_BASE_A;
+#endif
+    Experiment.cq_N = state->dq_sample_count > UINT8_MAX
+        ? UINT8_MAX : (uint8_t)state->dq_sample_count;
+    Experiment.count_id = state->dq_sample_count > UINT16_MAX
+        ? UINT16_MAX : (uint16_t)state->dq_sample_count;
+    Experiment.count_iq = Experiment.count_id;
+    Experiment.edge_idx[0] = 0;
+    if (state->state == IDENTIFICATION_IQ_PROCESS)
+        Experiment.edge_idx[1] = state->sample_count;
+    if (state->step_index < IDENTIFICATION_IQ_MAX_STEPS
+        && state->injection_mode != IDENTIFICATION_IQ_INJECT_DQ)
+    {
+        const IdentificationIqPoint_t* point = state->injection_mode == IDENTIFICATION_IQ_INJECT_D
+            ? &state->d_results[state->step_index] : &state->q_results[state->step_index];
+        Experiment.sum_max_psi = gateway_to_physical(point->maximum_flux_pu, MC_FLUX_BASE_WB)
+            * (float)state->repeat_count;
+        Experiment.sum_max_I = gateway_to_physical(point->current_pu, MC_CURRENT_BASE_A)
+            * (float)state->repeat_count;
+    }
+}
+
 static void gateway_initialize_identification_mirror(void)
 {
     Experiment.Ts = MAIN_LOOP_TIME;
@@ -210,7 +288,7 @@ bool FixedControl_ModeRequestsStop(void)
 {
     /* Match FLOAT_REF's Foc_Get_ResetFlag(): IDLE must keep hardware Stop
      * asserted, not merely reset the algorithm and emit neutral duty. */
-    return gateway_validate_mode(Foc_Mode) == IDLE;
+    return MainInt_ModeRequestsStop() || gateway_validate_mode(Foc_Mode) == IDLE;
 }
 
 static void gateway_read_parameters(FocIqParameters_t* parameters)
@@ -225,6 +303,7 @@ static void gateway_read_parameters(FocIqParameters_t* parameters)
     parameters->startup_prepare_request = Foc_StartupPrepareRequest;
     parameters->use_real_angle = MainInt_UseRealTheta;
     parameters->sensorless_method = Sensorless_Method;
+    parameters->sensorless_enabled = Sensorless_Enabled;
     parameters->speed_reference_pu = gateway_from_physical(
         Foc_Speed_Ref, MC_SPEED_BASE_RPM);
     parameters->vf_voltage_reference_pu = (ParkIq_t){
@@ -316,9 +395,22 @@ static void gateway_read_parameters(FocIqParameters_t* parameters)
         (float)Experiment.start_I, MC_CURRENT_BASE_A);
     identification->current_final_pu = gateway_from_physical(
         (float)Experiment.final_I, MC_CURRENT_BASE_A);
+    if (Experiment.step_dir == 0
+        || Experiment.step_dir >= (int)(128.0F * MC_CURRENT_BASE_A)
+        || Experiment.step_dir <= (int)(-128.0F * MC_CURRENT_BASE_A))
+    {
+        Experiment.step_dir = Experiment.step_dir < 0 ? -1 : 1;
+        McMath_Diagnostics.invalid_input_count++;
+    }
     identification->current_step_pu = gateway_from_physical(
-        Experiment.step_dir < 0 ? -1.0F : 1.0F, MC_CURRENT_BASE_A);
-    Experiment.step_dir = Experiment.step_dir < 0 ? -1 : 1;
+        (float)Experiment.step_dir, MC_CURRENT_BASE_A);
+    /* The legacy scan commands are integer amperes. Keep their exact
+     * endpoints for scheduling; independently rounded Q24 start/end/step
+     * must not decide whether the last physical current point exists. */
+    identification->integer_current_scan = true;
+    identification->current_start_a = Experiment.start_I;
+    identification->current_final_a = Experiment.final_I;
+    identification->current_step_a = Experiment.step_dir;
     identification->injection_voltage_d_pu = gateway_from_physical(
         Experiment.inj.Ud_amp, MC_VOLTAGE_BASE_V);
     identification->injection_voltage_q_pu = gateway_from_physical(
@@ -346,7 +438,7 @@ static void gateway_write_telemetry(const FocIqState_t* state,
         value->speed_feedback_pu, MC_SPEED_BASE_RPM);
     Foc_Theta = gateway_to_physical(value->control_angle_pu, MC_TWO_PI_F);
     Foc_BusVoltage = bus_voltage;
-    Foc_BusVoltage_Inv = bus_voltage > 0.0F ? 1.0F / bus_voltage : 0.0F;
+    Foc_BusVoltage_Inv = bus_voltage >= 100.0F ? 1.0F / bus_voltage : 0.0F;
     Foc_Id_Ref = gateway_to_physical(
         value->current_reference_dq_pu.d, MC_CURRENT_BASE_A);
     Foc_Iq_Ref = gateway_to_physical(
@@ -379,17 +471,29 @@ static void gateway_write_telemetry(const FocIqState_t* state,
         state->speed_pid.integral, MC_CURRENT_BASE_A);
     Foc_Pid_Speed_Handler.previous_error = gateway_to_physical(
         state->speed_pid.last_error, MC_SPEED_BASE_RPM);
-    Foc_Pid_Speed_Handler.output = Foc_Iq_Ref;
+    Foc_Pid_Speed_Handler.output = gateway_to_physical(
+        state->speed_pid.output, MC_CURRENT_BASE_A);
     Foc_Pid_CurD_Handler.integral = gateway_to_physical(
         state->current_d_pid.integral, MC_VOLTAGE_BASE_V);
     Foc_Pid_CurD_Handler.previous_error = gateway_to_physical(
         state->current_d_pid.last_error, MC_CURRENT_BASE_A);
-    Foc_Pid_CurD_Handler.output = Foc_Ud_Ref;
+    Foc_Pid_CurD_Handler.output = gateway_to_physical(
+        state->current_d_pid.output, MC_VOLTAGE_BASE_V);
     Foc_Pid_CurQ_Handler.integral = gateway_to_physical(
         state->current_q_pid.integral, MC_VOLTAGE_BASE_V);
     Foc_Pid_CurQ_Handler.previous_error = gateway_to_physical(
         state->current_q_pid.last_error, MC_CURRENT_BASE_A);
-    Foc_Pid_CurQ_Handler.output = Foc_Uq_Ref;
+    Foc_Pid_CurQ_Handler.output = gateway_to_physical(
+        state->current_q_pid.output, MC_VOLTAGE_BASE_V);
+    /* Handler.Kp/Ki remain writable base gains. Publish adaptive physical
+     * gains separately, never feed amplified gains back as the next base. */
+    Foc_Pid_Speed_Effective = Foc_Pid_Speed_Handler;
+    Foc_Pid_Speed_Effective.Kp = McMath_ToFloat(state->speed_pid.kp)
+        * MC_CURRENT_BASE_A / MC_SPEED_BASE_RPM;
+    Foc_Pid_Speed_Effective.Ki = McMath_ToFloat(state->speed_pid.ki_step)
+        * MC_CURRENT_BASE_A / MC_SPEED_BASE_RPM / SPEED_LOOP_TIME;
+    Foc_Pid_Speed_Effective.Ts = SPEED_LOOP_TIME;
+    Foc_Pid_Speed_Effective.Reset = Foc_Reset;
     if (state->mode == IDENTIFY)
     {
         Identification_State = (uint16_t)value->identification_state;
@@ -404,6 +508,7 @@ static void gateway_write_telemetry(const FocIqState_t* state,
     Mtpa_RebuildPending = state->mtpa_rebuild_pending
                        || state->mtpa_rebuild_in_progress;
     Mtpa_RebuildFailed = state->mtpa_rebuild_failed;
+    Mtpa_LinearFallback = state->mtpa_linear_fallback;
     /* DONE/FAILED requests IDLE.  Preserve the last experiment mirrors after
      * that transition instead of overwriting them with Reset's zero state. */
     if (state->mode != IDENTIFY)
@@ -460,10 +565,12 @@ static void gateway_write_telemetry(const FocIqState_t* state,
             state->identification.coefficients.adq, 4U);
         Experiment.LLS.D.J = gateway_accum_to_physical(
             state->identification.coefficients.ssr_d,
-            MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+            MC_CURRENT_BASE_A * MC_CURRENT_BASE_A)
+            * (float)state->identification.d_result_count;
         Experiment.LLS.Q.J = gateway_accum_to_physical(
             state->identification.coefficients.ssr_q,
-            MC_CURRENT_BASE_A * MC_CURRENT_BASE_A);
+            MC_CURRENT_BASE_A * MC_CURRENT_BASE_A)
+            * (float)state->identification.q_result_count;
         Experiment.LLS.D.R2 = McMath_ToFloat(
             state->identification.coefficients.r2_d);
         Experiment.LLS.Q.R2 = McMath_ToFloat(
@@ -515,15 +622,84 @@ static void gateway_write_telemetry(const FocIqState_t* state,
     }
 }
 
+static void gateway_initialize_control_cache(FixedControlState_t* state)
+{
+    state->gateway_speed_ramp_slope = RAMP_SPEED_SLOPE;
+    state->gateway_ramp_minimum = RAMP_SPEED_LIMIT_MIN;
+    state->gateway_ramp_maximum = RAMP_SPEED_LIMIT_MAX;
+    Foc_Ramp_Speed_Handler = (A2lRampMirror_t){
+        .slope = RAMP_SPEED_SLOPE, .limit_min = RAMP_SPEED_LIMIT_MIN,
+        .limit_max = RAMP_SPEED_LIMIT_MAX, .Ts = SPEED_LOOP_TIME};
+    /* Invalid writes made before INIT must not become the rollback baseline. */
+    state->gateway_pid_cache[0] = (A2lPidMirror_t){
+        .Kp=PID_SPEED_LOOP_KP, .Ki=PID_SPEED_LOOP_KI, .Kd=PID_SPEED_LOOP_KD,
+        .MinOutput=PID_SPEED_LOOP_MIN_OUTPUT, .MaxOutput=PID_SPEED_LOOP_MAX_OUTPUT,
+        .IntegralLimit=PID_SPEED_LOOP_INTEGRAL_LIMIT};
+    state->gateway_pid_cache[1] = (A2lPidMirror_t){
+        .Kp=PID_CURRENT_D_LOOP_KP, .Ki=PID_CURRENT_D_LOOP_KI, .Kd=PID_CURRENT_D_LOOP_KD,
+        .MinOutput=PID_CURRENT_D_LOOP_MIN_OUTPUT, .MaxOutput=PID_CURRENT_D_LOOP_MAX_OUTPUT,
+        .IntegralLimit=PID_CURRENT_D_LOOP_INTEGRAL_LIMIT};
+    state->gateway_pid_cache[2] = (A2lPidMirror_t){
+        .Kp=PID_CURRENT_Q_LOOP_KP, .Ki=PID_CURRENT_Q_LOOP_KI, .Kd=PID_CURRENT_Q_LOOP_KD,
+        .MinOutput=PID_CURRENT_Q_LOOP_MIN_OUTPUT, .MaxOutput=PID_CURRENT_Q_LOOP_MAX_OUTPUT,
+        .IntegralLimit=PID_CURRENT_Q_LOOP_INTEGRAL_LIMIT};
+}
+
 void FixedControl_Init(FixedControlState_t* state)
 {
     if (state == NULL)
         return;
+    /* Cold startup must not inspect the caller's uninitialized storage. */
     *state = (FixedControlState_t){0};
     FocIq_DefaultParameters(&state->parameters);
     FocIq_Init(&state->foc, NULL);
+    Mtpa_LinearFallback = false;
+    SensorlessGateway_Init(&state->sensorless_gateway,
+                           &state->foc.config.sensorless);
+    SensorlessIq_Init(&state->foc.sensorless, &state->foc.config.sensorless);
+    gateway_initialize_control_cache(state);
+    FixedDebug_PublishMtpa(&state->foc.mtpa);
     McMath_ResetDiagnostics();
     state->initialized = true;
+    FixedControl_SelfTest = FixedControl_RunSelfTest();
+}
+
+void FixedControl_Reinitialize(FixedControlState_t* state)
+{
+    if (state == NULL || !state->initialized || !state->foc.initialized)
+        return;
+    /* Preserve the last accepted physical settings, including a valid last
+     * CAN write, before resetting only the original INIT-owned parameters. */
+    SensorlessGateway_Read(&state->sensorless_gateway,
+        &state->foc.config.sensorless, &state->foc.config.leso,
+        &state->foc.config.hfi, &state->foc.sensorless,
+        &state->foc.leso, &state->foc.hfi);
+    FocIq_Reinitialize(&state->foc);
+    SensorlessGateway_Reinitialize(&state->sensorless_gateway,
+                                  &state->foc.config.sensorless);
+    state->foc.sensorless.enabled = Sensorless_Enabled;
+    state->foc.sensorless.method = (SensorlessIqMethod_t)Sensorless_Method;
+    state->gateway_previous_mode = IDLE;
+    Foc_Mode = IDLE;
+    Foc_Reset = true;
+    gateway_initialize_control_cache(state);
+    Foc_Pid_Speed_Handler = state->gateway_pid_cache[0];
+    Foc_Pid_CurD_Handler = state->gateway_pid_cache[1];
+    Foc_Pid_CurQ_Handler = state->gateway_pid_cache[2];
+    Foc_Pid_Speed_Handler.Ts = SPEED_LOOP_TIME;
+    Foc_Pid_CurD_Handler.Ts = Foc_Pid_CurQ_Handler.Ts = MAIN_LOOP_TIME;
+    Foc_Pid_Speed_Handler.Reset = Foc_Pid_CurD_Handler.Reset
+        = Foc_Pid_CurQ_Handler.Reset = true;
+    Mtpa_TableValid = state->foc.mtpa.table_valid;
+    Mtpa_RebuildPending = false;
+    Mtpa_RebuildFailed = false;
+    Mtpa_LinearFallback = false;
+    SensorlessGateway_Publish(&state->sensorless_gateway,
+        &state->foc.sensorless, &state->foc.leso, &state->foc.hfi,
+        &state->foc.flying, state->foc.inductance_dq_pu, true);
+    FixedDebug_PublishMtpa(&state->foc.mtpa);
+    /* No default-table rebuild here. If the retained active table is invalid,
+     * MainInt_ControlReady still rejects INIT and leaves the output stopped. */
     FixedControl_SelfTest = FixedControl_RunSelfTest();
 }
 
@@ -556,7 +732,56 @@ FixedControlOutput_t FixedControl_Step(FixedControlState_t* state,
         gateway_initialize_identification_mirror();
     state->gateway_previous_mode = requested_mode;
     Foc_Reset = input->reset || gateway_validate_mode(Foc_Mode) == IDLE;
+    if (gateway_validate_mode(Foc_Mode) == SPEED && Foc_Reset)
+        Foc_Speed_Ref = 0.0F; /* Original SPEED Reset clears the target. */
+    if (gateway_validate_mode(Foc_Mode) == IF_MODE && Foc_IfParam.use_sensor)
+        Foc_IfParam.offset = 0.0F;
+    SensorlessGateway_Read(&state->sensorless_gateway,
+        &state->foc.config.sensorless, &state->foc.config.leso,
+        &state->foc.config.hfi, &state->foc.sensorless,
+        &state->foc.leso, &state->foc.hfi);
+    gateway_validate_pid(&Foc_Pid_Speed_Handler, &state->gateway_pid_cache[0],
+        MC_SPEED_BASE_RPM / MC_CURRENT_BASE_A, MC_CURRENT_BASE_A, SPEED_LOOP_TIME);
+    gateway_validate_pid(&Foc_Pid_CurD_Handler, &state->gateway_pid_cache[1],
+        MC_CURRENT_BASE_A / MC_VOLTAGE_BASE_V, MC_VOLTAGE_BASE_V, MAIN_LOOP_TIME);
+    gateway_validate_pid(&Foc_Pid_CurQ_Handler, &state->gateway_pid_cache[2],
+        MC_CURRENT_BASE_A / MC_VOLTAGE_BASE_V, MC_VOLTAGE_BASE_V, MAIN_LOOP_TIME);
     gateway_read_parameters(&state->parameters);
+    float ramp_min = Foc_Ramp_Speed_Handler.limit_min;
+    float ramp_max = Foc_Ramp_Speed_Handler.limit_max;
+    if (ramp_min != state->gateway_ramp_minimum || ramp_max != state->gateway_ramp_maximum)
+    {
+        if (isfinite(ramp_min) && isfinite(ramp_max) && ramp_min <= ramp_max
+            && ramp_min / MC_SPEED_BASE_RPM > -128.0F
+            && ramp_max / MC_SPEED_BASE_RPM < 128.0F)
+        {
+            state->foc.config.speed_ramp_minimum_pu = McMath_FromFloat(ramp_min / MC_SPEED_BASE_RPM);
+            state->foc.config.speed_ramp_maximum_pu = McMath_FromFloat(ramp_max / MC_SPEED_BASE_RPM);
+            state->gateway_ramp_minimum = ramp_min; state->gateway_ramp_maximum = ramp_max;
+        }
+        else
+        {
+            Foc_Ramp_Speed_Handler.limit_min = state->gateway_ramp_minimum;
+            Foc_Ramp_Speed_Handler.limit_max = state->gateway_ramp_maximum;
+            McMath_Diagnostics.invalid_input_count++;
+        }
+    }
+    float ramp_slope = Foc_Ramp_Speed_Handler.slope;
+    if (ramp_slope != state->gateway_speed_ramp_slope)
+    {
+        float step_pu = ramp_slope * SPEED_LOOP_TIME / MC_SPEED_BASE_RPM;
+        if (isfinite(ramp_slope) && ramp_slope >= 0.0F
+            && isfinite(step_pu) && step_pu < 128.0F)
+        {
+            state->foc.config.speed_ramp_step_pu = McMath_FromFloat(step_pu);
+            state->gateway_speed_ramp_slope = ramp_slope;
+        }
+        else
+        {
+            McMath_Diagnostics.invalid_input_count++;
+            Foc_Ramp_Speed_Handler.slope = state->gateway_speed_ramp_slope;
+        }
+    }
     FocIqInput_t fixed_input = {
         .current_abc_pu = {
             gateway_from_physical(input->current_abc.a, MC_CURRENT_BASE_A),
@@ -578,6 +803,26 @@ FixedControlOutput_t FixedControl_Step(FixedControlState_t* state,
     FocIq_Run(&state->foc, &state->parameters,
               &fixed_input, &fixed_output);
     gateway_write_telemetry(&state->foc, &fixed_output, input->bus_voltage);
+    SensorlessGateway_Publish(&state->sensorless_gateway,
+        &state->foc.sensorless, &state->foc.leso, &state->foc.hfi,
+        &state->foc.flying, fixed_output.inductance_dq_pu, Foc_Reset);
+    Foc_Pid_Speed_Handler.Reset = Foc_Reset;
+    Foc_Pid_CurD_Handler.Reset = Foc_Reset;
+    Foc_Pid_CurQ_Handler.Reset = Foc_Reset;
+    Foc_Pid_Speed_Handler.Ts = SPEED_LOOP_TIME;
+    Foc_Pid_CurD_Handler.Ts = Foc_Pid_CurQ_Handler.Ts = MAIN_LOOP_TIME;
+    Foc_Ramp_Speed_Handler.value = Foc_Speed_Ramp;
+    Foc_Ramp_Speed_Handler.target = state->foc.mode == SPEED
+        ? Foc_Speed_Ref : 0.0F;
+    Foc_Ramp_Speed_Handler.Ts = SPEED_LOOP_TIME;
+    /* Extra legacy watch aliases refresh at 100 Hz, not 5 kHz. Existing FOC
+     * feedback and serial telemetry retain their original update cadence. */
+    if (FixedControl_CycleCount == 1U || FixedControl_CycleCount % 50U == 0U)
+    {
+        FixedDebug_Publish(&state->foc, &fixed_input, &fixed_output);
+        if (state->foc.mode == IDENTIFY)
+            gateway_publish_identification_process(&state->foc.identification);
+    }
     output.pwm_duty = (Phase_t){
         McMath_ToFloat(fixed_output.pwm_duty.a),
         McMath_ToFloat(fixed_output.pwm_duty.b),

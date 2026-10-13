@@ -41,6 +41,9 @@ OF SUCH DAMAGE.
 #include "main_int.h"
 #include "protect.h"
 #include "systick.h"
+#if defined(MC_NUMERIC_IQMATH)
+#include "Initialization.h"
+#endif
 
 static volatile uint16_t systick_cnt = 0x0000U;
 
@@ -206,6 +209,12 @@ void TIMER0_BRK_IRQHandler(void) {
         if (Peripheral_Get_SoftwareBrk()) {
 #endif
             Protect_HardWareFault(false);
+#if defined(MC_NUMERIC_IQMATH)
+            ++FixedHardwareFaultEvents;
+            /* A delivered BRK fault proves this arming epoch has run. Keep
+             * background auto-arming blocked after the IRQ is disabled. */
+            FixedBreakIrqArmed = true;
+#endif
             timer_interrupt_disable(TIMER0,
                                     TIMER_INT_BRK);  // 禁用BRK中断
             timer_primary_output_config(TIMER0, DISABLE);

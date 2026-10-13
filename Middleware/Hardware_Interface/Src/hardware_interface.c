@@ -13,6 +13,9 @@
 #include "tim.h"
 #include "transformation.h"
 #include "usart.h"
+#if defined(MC_NUMERIC_IQMATH)
+#include "main_int.h"
+#endif
 
 static volatile uint16_t Stop           = 0x0001U;
 static volatile bool     Software_BRK   = false;
@@ -96,6 +99,41 @@ bool Peripheral_Get_Stop(void)
 
 bool Peripheral_Update_Break(void)
 {
+#if defined(MC_NUMERIC_IQMATH)
+    /* Main loop and ADC both enter here. Keep the decision and MOE write in
+     * one short critical section: an IRQ stop must not return into an old
+     * recovery branch and re-enable the bridge. Hardware BKIN remains active. */
+    uint32_t interrupt_state = __get_PRIMASK();
+    __disable_irq();
+    if (Protect_Validate_Flag() || Stop || MainInt_InitBlocksOutput()
+        || gpio_input_bit_get(GPIOE, GPIO_PIN_15) != SET)
+    {
+        Stop = 0x0001U;
+        /* Restore the legacy sustained gate-off effect on EVERY stopped
+         * call, including when Software_BRK is already set. Directly clear
+         * MOE without repeatedly generating high-priority BRK interrupts. */
+        timer_primary_output_config(TIMER0, DISABLE);
+        if (!Software_BRK)
+        {
+            Software_BRK = true;
+            TIMER_SWEVG(TIMER0) |= TIMER_SWEVG_BRKG;
+        }
+    }
+    else
+    {
+        /* After a successful INIT, original recovery condition: PE15 high.
+         * The internal INIT latch above cannot be cleared by writing Stop,
+         * Flag, mode or the public startup-status mirror. PE4 is an EXTI stop
+         * event, not a new persistent-level interlock. Stop is already zero;
+         * never overwrite a newer stop request with a saved zero. */
+        Software_BRK = false;
+        timer_primary_output_config(TIMER0, ENABLE);
+    }
+    if (interrupt_state == 0U)
+        __enable_irq();
+    /* Read after unmasking so an immediately delivered stop is visible. */
+    return Stop != 0U;
+#else
     if (Protect_Validate_Flag())
     {
         Stop = 0x0001U;
@@ -103,36 +141,15 @@ bool Peripheral_Update_Break(void)
     if (Stop)
     {
         // 软件触发 BRK
-#if defined(MC_NUMERIC_IQMATH)
-        /* One break event is enough while stopped. Re-triggering on every
-         * 5 kHz control cycle can starve the ADC interrupt. */
-        if (!Software_BRK)
-        {
-            Software_BRK = true;
-            TIMER_SWEVG(TIMER0) |= TIMER_SWEVG_BRKG;
-        }
-#else
         Software_BRK = true;
         TIMER_SWEVG(TIMER0) |= TIMER_SWEVG_BRKG;
-#endif
     }
     else
     {
         // Stop = 0，尝试恢复
-#if defined(MC_NUMERIC_IQMATH)
-        /* EXTI4 uses PE4 falling edge as an external stop. Do not re-arm
-         * MOE while that input remains low, even if CCP writes Stop = 0. */
-        if (gpio_input_bit_get(GPIOE, GPIO_PIN_4) != SET)
-        {
-            Stop = 1;
-            if (!Software_BRK)
-            {
-                Software_BRK = true;
-                TIMER_SWEVG(TIMER0) |= TIMER_SWEVG_BRKG;
-            }
-            return true;
-        }
-#endif
+        /* Match the original recovery condition: PE15 must be high.
+         * PE4 remains an EXTI4 falling-edge stop event; it is not polled
+         * here as an additional persistent-level recovery interlock. */
         if (gpio_input_bit_get(GPIOE, GPIO_PIN_15) == SET)
         {
             Software_BRK = false;
@@ -145,6 +162,7 @@ bool Peripheral_Update_Break(void)
         }
     }
     return Stop != 0 ? true : false;
+#endif
 }
 
 bool Peripheral_Get_HardwareBrk(void)

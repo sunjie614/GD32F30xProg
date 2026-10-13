@@ -75,6 +75,7 @@ if ($Backend -eq 'IQMATH') {
         'Sensorless/CMakeFiles/Sensorless.dir/Src/leso_iq.c.obj',
         'Sensorless/CMakeFiles/Sensorless.dir/Src/hf_injection_iq.c.obj',
         'Sensorless/CMakeFiles/Sensorless.dir/Src/flying_iq.c.obj'
+        'Sensorless/CMakeFiles/Sensorless.dir/Src/sensorless_iq.c.obj'
     )
     foreach ($relativeObject in $algorithmObjects) {
         $object = Join-Path $build $relativeObject
