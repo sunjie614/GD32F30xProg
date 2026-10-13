@@ -203,6 +203,93 @@ static int gateway_scan_regression(void)
     return 0;
 }
 
+static int gateway_dq_current_regression(void)
+{
+    FixedControlState_t state;
+    FixedControlInput_t input = {.bus_voltage = 400.0F, .reset = true};
+    FixedControl_Init(&state);
+    MainInt_State = RUNNING;
+    if (Identification_DqCurrent_A != 9.0F) return 60;
+    Identification_DqCurrent_A = 10.0F;
+    (void)FixedControl_Step(&state, &input);
+    Foc_Mode = IDENTIFY;
+    (void)FixedControl_Step(&state, &input);
+    if (Identification_DqCurrent_A != 10.0F
+        || state.foc.identification.config.dq_current_pu
+            != McMath_FromFloat(10.0F / MC_CURRENT_BASE_A)
+        || Experiment.start_I != 3 || Experiment.final_I != 12)
+        return 61;
+
+    const float invalid[] = {NAN, INFINITY, -INFINITY, 0.0F, -1.0F,
+                            128.0F * MC_CURRENT_BASE_A, 1.0e30F, 1.0e-20F};
+    for (unsigned index = 0U; index < sizeof(invalid) / sizeof(invalid[0]); ++index)
+    {
+        uint32_t errors = McMath_Diagnostics.invalid_input_count;
+        Identification_DqCurrent_A = invalid[index];
+        (void)FixedControl_Step(&state, &input);
+        if (Identification_DqCurrent_A != 10.0F
+            || state.foc.identification.config.dq_current_pu
+                != McMath_FromFloat(10.0F / MC_CURRENT_BASE_A)
+            || McMath_Diagnostics.invalid_input_count != errors + 1U)
+            return 62;
+    }
+
+    /* Use the real gateway/core transition into DQ; no direct Imax write. */
+    state.foc.identification.injection_mode = IDENTIFICATION_IQ_INJECT_DQ;
+    state.foc.identification.state = IDENTIFICATION_IQ_PENDING;
+    state.foc.identification.rs_complete = true;
+    input.reset = false;
+    (void)FixedControl_Step(&state, &input);
+    if (state.foc.identification.state != IDENTIFICATION_IQ_INJECT_COLLECT
+        || Experiment.inj.State || fabsf(Experiment.inj.Imax - 10.0F) > 0.00002F)
+        return 63;
+    Identification_DqCurrent_A = 9.5F;
+    (void)FixedControl_Step(&state, &input);
+    if (fabsf(Experiment.inj.Imax - 9.5F) > 0.00002F
+        || fabsf(Experiment.inj.IDmax - 9.5F) > 0.00002F
+        || fabsf(Experiment.inj.IQmax - 9.5F) > 0.00002F
+        || state.foc.identification.dq_current_latched || Experiment.inj.State)
+        return 64;
+
+    Identification_DqCurrent_A = 10.0F;
+    Experiment.inj.Ud_amp = Experiment.inj.Uq_amp = 80.0F;
+    Experiment.inj.State = true;
+    (void)FixedControl_Step(&state, &input);
+    if (!state.foc.identification.dq_current_latched
+        || !Experiment.inj.State || fabsf(Experiment.inj.Imax - 10.0F) > 0.00002F)
+        return 65;
+    Identification_DqCurrent_A = 9.5F;
+    (void)FixedControl_Step(&state, &input);
+    if (Identification_DqCurrent_A != 9.5F
+        || state.foc.identification.config.dq_current_pu
+            != McMath_FromFloat(9.5F / MC_CURRENT_BASE_A)
+        || fabsf(Experiment.inj.Imax - 10.0F) > 0.00002F)
+        return 66;
+    Experiment.inj.State = false;
+    FixedControlOutput_t paused = FixedControl_Step(&state, &input);
+    if (Experiment.inj.State || !state.foc.identification.dq_current_latched
+        || fabsf(Experiment.inj.Imax - 10.0F) > 0.00002F
+        || fabsf(paused.voltage_dq.d) > 0.001F
+        || fabsf(paused.voltage_dq.q) > 0.001F)
+        return 67;
+    Experiment.inj.State = true;
+    (void)FixedControl_Step(&state, &input);
+    if (fabsf(Experiment.inj.Imax - 10.0F) > 0.00002F) return 68;
+
+    /* Warm INIT preserves both a valid pending setpoint and its rollback
+     * cache; power-on Init restores the requested 9 A default. */
+    FixedControl_Reinitialize(&state);
+    if (Identification_DqCurrent_A != 9.5F) return 69;
+    input.reset = true;
+    Identification_DqCurrent_A = NAN;
+    (void)FixedControl_Step(&state, &input);
+    if (Identification_DqCurrent_A != 9.5F) return 70;
+    FixedControl_Init(&state);
+    if (Identification_DqCurrent_A != 9.0F) return 71;
+    puts("PASS: DQ A2L 9 A default, fractional writes, invalid rollback, preview/latch and warm INIT");
+    return 0;
+}
+
 static int gateway_mtpa_fallback_regression(void)
 {
     FixedControlState_t state;
@@ -417,6 +504,12 @@ int main(void)
     {
         fprintf(stderr, "FAIL MTPA gateway regression: %d\n", mtpa_result);
         return mtpa_result;
+    }
+    int dq_result = gateway_dq_current_regression();
+    if (dq_result != 0)
+    {
+        fprintf(stderr, "FAIL DQ current gateway regression: %d\n", dq_result);
+        return dq_result;
     }
     puts("PASS: A2L mode, ADC Q24, identification gateway and legacy sensorless master gating");
     return 0;

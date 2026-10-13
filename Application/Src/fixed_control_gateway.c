@@ -96,6 +96,7 @@ volatile float Identification_Voltage = 100.0F;
 volatile float Identification_Rs = 0.0F;
 volatile uint16_t Identification_State = IDENTIFICATION_IQ_WAIT;
 volatile uint16_t Identification_Error = IDENTIFICATION_IQ_NO_ERROR;
+volatile float Identification_DqCurrent_A = IDENTIFICATION_IQ_DQ_CURRENT_DEFAULT_A;
 volatile bool Foc_StartupActive = false;
 volatile bool Sensorless_UsingHfi = false;
 volatile bool Mtpa_TableValid = false;
@@ -289,6 +290,27 @@ bool FixedControl_ModeRequestsStop(void)
     /* Match FLOAT_REF's Foc_Get_ResetFlag(): IDLE must keep hardware Stop
      * asserted, not merely reset the algorithm and emit neutral duty. */
     return MainInt_ModeRequestsStop() || gateway_validate_mode(Foc_Mode) == IDLE;
+}
+
+static void gateway_read_dq_current(FixedControlState_t* state)
+{
+    const float requested = Identification_DqCurrent_A;
+    mc_real_t converted = MC_ZERO;
+    if (isfinite(requested) && requested > 0.0F
+        && requested / MC_CURRENT_BASE_A < 128.0F)
+        converted = McMath_FromFloat(requested / MC_CURRENT_BASE_A);
+    if (converted > MC_ZERO)
+        state->gateway_identification_dq_current_a = requested;
+    else
+    {
+        /* Reject invalid/under-resolution values without changing the last
+         * accepted setpoint or writing any control/measurement state. */
+        Identification_DqCurrent_A = state->gateway_identification_dq_current_a;
+        converted = McMath_FromFloat(
+            state->gateway_identification_dq_current_a / MC_CURRENT_BASE_A);
+        McMath_Diagnostics.invalid_input_count++;
+    }
+    state->parameters.identification_config.dq_current_pu = converted;
 }
 
 static void gateway_read_parameters(FocIqParameters_t* parameters)
@@ -653,6 +675,8 @@ void FixedControl_Init(FixedControlState_t* state)
     *state = (FixedControlState_t){0};
     FocIq_DefaultParameters(&state->parameters);
     FocIq_Init(&state->foc, NULL);
+    Identification_DqCurrent_A = IDENTIFICATION_IQ_DQ_CURRENT_DEFAULT_A;
+    state->gateway_identification_dq_current_a = Identification_DqCurrent_A;
     Mtpa_LinearFallback = false;
     SensorlessGateway_Init(&state->sensorless_gateway,
                            &state->foc.config.sensorless);
@@ -747,6 +771,7 @@ FixedControlOutput_t FixedControl_Step(FixedControlState_t* state,
     gateway_validate_pid(&Foc_Pid_CurQ_Handler, &state->gateway_pid_cache[2],
         MC_CURRENT_BASE_A / MC_VOLTAGE_BASE_V, MC_VOLTAGE_BASE_V, MAIN_LOOP_TIME);
     gateway_read_parameters(&state->parameters);
+    gateway_read_dq_current(state);
     float ramp_min = Foc_Ramp_Speed_Handler.limit_min;
     float ramp_max = Foc_Ramp_Speed_Handler.limit_max;
     if (ramp_min != state->gateway_ramp_minimum || ramp_max != state->gateway_ramp_maximum)

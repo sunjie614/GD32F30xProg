@@ -121,6 +121,7 @@ static int reset_matches_initialized_metadata(bool manual_control)
     EXPECT_RESET_FIELD(start_requested);
     EXPECT_RESET_FIELD(rs_complete);
     EXPECT_RESET_FIELD(point_started);
+    EXPECT_RESET_FIELD(dq_current_latched);
     for (unsigned index = 0U; index < IDENTIFICATION_IQ_MAX_STEPS; ++index)
     {
         EXPECT_RESET_FIELD(d_results[index].current_pu);
@@ -181,6 +182,8 @@ static int legacy_capture_alignment(void)
         IdentificationIqState_t state;
         IdentificationIq_DefaultConfig(&config);
         config.manual_control = true;
+        /* Preserve the old 3 A waveform fixture; DQ now has its own input. */
+        config.dq_current_pu = McMath_FromFloat(3.0F / MC_CURRENT_BASE_A);
         config.injection_voltage_d_pu = McMath_FromFloat(100.0F / MC_VOLTAGE_BASE_V);
         config.injection_voltage_q_pu = McMath_FromFloat(70.0F / MC_VOLTAGE_BASE_V);
         IdentificationIq_Init(&state, &config);
@@ -379,6 +382,7 @@ static int manual_workflow_completes(void)
     config.current_start_pu = MC_CONST(0.03);
     config.current_final_pu = MC_CONST(0.18);
     config.current_step_pu = MC_CONST(0.03);
+    config.dq_current_pu = config.current_start_pu;
     config.current_limit_pu = MC_CONST(0.8);
     /* The legacy Rs predictor needs a below-target estimate before the
      * convergence target is crossed. 0.15 with a 0.02 V / 0.2 R fixture
@@ -446,6 +450,94 @@ static int manual_workflow_completes(void)
             return 0;
     }
     return 0;
+}
+
+static int independent_dq_current_latching(void)
+{
+    for (unsigned manual = 0U; manual < 2U; ++manual)
+    {
+        IdentificationIqConfig_t config;
+        IdentificationIqState_t state;
+        IdentificationIqInput_t input = {0};
+        IdentificationIqOutput_t output;
+        IdentificationIq_DefaultConfig(&config);
+        if (fabsf(McMath_ToFloat(config.dq_current_pu) * MC_CURRENT_BASE_A
+                  - 9.0F) > 0.00002F)
+            return 0;
+        config.manual_control = manual != 0U;
+        IdentificationIq_Init(&state, &config);
+        state.injection_mode = IDENTIFICATION_IQ_INJECT_DQ;
+        state.state = IDENTIFICATION_IQ_PENDING;
+        IdentificationIq_Run(&state, &input, &output);
+        if (state.state != IDENTIFICATION_IQ_INJECT_COLLECT
+            || state.current_target_pu != config.dq_current_pu
+            || state.dq_current_latched)
+            return 0;
+
+        const mc_real_t selected = McMath_FromFloat(9.5F / MC_CURRENT_BASE_A);
+        state.config.dq_current_pu = selected;
+        if (manual)
+        {
+            IdentificationIq_Run(&state, &input, &output);
+            if (state.current_target_pu != selected || state.dq_current_latched
+                || state.point_started || output.voltage_d_pu != MC_ZERO
+                || output.voltage_q_pu != MC_ZERO)
+                return 0;
+        }
+        input.injection_enable = true;
+        IdentificationIq_Run(&state, &input, &output);
+        if (!state.dq_current_latched || state.current_target_pu != selected)
+            return 0;
+
+        state.config.dq_current_pu = McMath_FromFloat(10.0F / MC_CURRENT_BASE_A);
+        input.injection_enable = false; /* Manual pause must not unlock. */
+        IdentificationIq_Run(&state, &input, &output);
+        if (!state.dq_current_latched || state.current_target_pu != selected)
+            return 0;
+        input.injection_enable = true;
+        IdentificationIq_Run(&state, &input, &output);
+        if (state.current_target_pu != selected) return 0;
+
+        /* Simulate a completed capture, exercise the real repeat transition,
+         * and ensure reset_capture does not unlock the batch threshold. */
+        state.state = IDENTIFICATION_IQ_PROCESS;
+        state.sample_count = 2U;
+        for (unsigned sample = 0U; sample < 2U; ++sample)
+        {
+            state.flux_d[sample] = state.flux_q[sample] = MC_ZERO;
+            state.current_d[sample] = state.current_q[sample] = MC_ZERO;
+        }
+        IdentificationIq_Run(&state, &input, &output);
+        if (state.state != IDENTIFICATION_IQ_INJECT_COLLECT
+            || state.repeat_count != 1U || !state.dq_current_latched
+            || state.current_target_pu != selected)
+            return 0;
+        IdentificationIq_Run(&state, &input, &output);
+        if (state.current_target_pu != selected) return 0;
+
+        IdentificationIq_Reset(&state);
+        if (state.dq_current_latched) return 0;
+        state.injection_mode = IDENTIFICATION_IQ_INJECT_DQ;
+        state.state = IDENTIFICATION_IQ_PENDING;
+        IdentificationIq_Run(&state, &input, &output);
+        if (state.current_target_pu != state.config.dq_current_pu) return 0;
+
+        /* Single-axis targets remain owned by the existing scan, regardless
+         * of the new DQ setting or whether the scan runs forward/reverse. */
+        for (unsigned axis = 0U; axis < 2U; ++axis)
+        {
+            IdentificationIq_Reset(&state);
+            state.injection_mode = (IdentificationIqInjectionMode_e)axis;
+            state.state = IDENTIFICATION_IQ_INJECT_COLLECT;
+            state.current_target_pu = MC_CONST(0.1);
+            IdentificationIq_Run(&state, &input, &output);
+            if (state.current_target_pu != MC_CONST(0.1)
+                || state.dq_current_latched)
+                return 0;
+        }
+    }
+    puts("PASS: independent 9 A DQ default, fractional preview, batch latch, pause/repeat and reset");
+    return 1;
 }
 
 static int legacy_integer_scan_endpoints(void)
@@ -701,6 +793,7 @@ int main(void)
         || !legacy_capture_alignment()
         || !legacy_positive_peak_keeps_current_sign()
         || !manual_pause_holds_original_capture()
+        || !independent_dq_current_latching()
         || !legacy_integer_scan_endpoints()
         || !legacy_rs_voltage_and_hold_parity()
         || !rs_failure_and_delta_boundaries())
@@ -722,6 +815,8 @@ int main(void)
     config.current_start_pu = MC_CONST(0.03);
     config.current_final_pu = MC_CONST(0.18);
     config.current_step_pu = MC_CONST(0.03);
+    /* Automatic legacy fixture used the last scan point for joint injection. */
+    config.dq_current_pu = config.current_final_pu;
     config.current_limit_pu = MC_CONST(0.8);
     config.rs_current_target_pu = MC_CONST(0.25);
     config.rs_threshold_pu = MC_CONST(0.01);

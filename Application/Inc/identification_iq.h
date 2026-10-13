@@ -8,6 +8,7 @@
 
 #define IDENTIFICATION_IQ_SAMPLE_CAPACITY 512U
 #define IDENTIFICATION_IQ_MAX_STEPS       20U
+#define IDENTIFICATION_IQ_DQ_CURRENT_DEFAULT_A 9
 
 typedef enum
 {
@@ -50,6 +51,9 @@ typedef struct
     mc_real_t current_start_pu;
     mc_real_t current_final_pu;
     mc_real_t current_step_pu;
+    /* Independent positive D/Q joint-injection threshold for both axes.
+     * Preview while waiting; latch at first injection for all repeats. */
+    mc_real_t dq_current_pu;
     /* The legacy Experiment API specifies whole amperes. In this explicit
      * mode, enumerate those integers exactly and quantize each target once.
      * Otherwise the three *_pu fields are the exact represented endpoints:
@@ -147,6 +151,7 @@ typedef struct
     bool start_requested;
     bool rs_complete;
     bool point_started;
+    bool dq_current_latched;
 } IdentificationIqState_t;
 
 typedef struct

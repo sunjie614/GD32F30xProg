@@ -247,6 +247,7 @@ HFI 与辨识方波是两套不同激励：Hfi_InjVolt 不修改 Experiment.inj.
 | 变量 | 默认/单位 | 输入/输出及行为 |
 |---|---|---|
 | `Experiment.start_I / final_I` | 3 / 12，整数 A | 起止电流输入，进入 IDENTIFY 后再设置 |
+| `Identification_DqCurrent_A` | 9 A，float 输入 | 独立 DQ 联合注入电流，支持小数；d/q 各按 ±该值换向，不是合成幅值。首次 DQ 注入前实时更新 Imax，开始后整组重复锁定；运行中改值供下一轮辨识使用 |
 | `Experiment.step_dir` | +1，整数 A | 原整数步长输入：+2 每步增加 2 A，−1 每步减少 1 A；0/超出表示范围会回退 ±1 并计无效输入；下一步越过终点则结束，不采越界点 |
 | `Experiment.repeat_times` | 3 | 每个点重复次数输入，限 1～3 |
 | `Experiment.max_steps` | 20 | 最大扫描点数输入，限 1～20；不是要求一定跑 20 点 |
@@ -277,10 +278,12 @@ HFI 与辨识方波是两套不同激励：Hfi_InjVolt 不修改 Experiment.inj.
 5. D 扫描：写 Ud_amp=100、Uq_amp=0，再写 `state=NEXT_I`。等 state=INJECT_COLLECT、inj.mode=D、Imax≈3 A、inj.State=0，写一次 `inj.State=1`。
 6. 同一点自动重复 3 次。Id 到 +Imax 切负 Ud，到 −Imax 切正 Ud。点完成后 Imax 自动推进至 4 A，但等待下一次人工 `inj.State=1`；依次至 12 A。不是手动改 Imax，也不用重写幅值。
 7. D 全部完成自动拟合 ad0/add，然后切 Q；两轴幅值被清零。等 INJECT_Q/INJECT_COLLECT，写 Ud_amp=0、Uq_amp=100，按每个新电流点放行，Iq 决定 Uq 极性。自动完整扫描，再拟合 aq0/aqq。
-8. 自动切 DQ，幅值再次清零，Imax 回起点。写 Ud_amp=100、Uq_amp=100，放行一次。Ud 根据 Id、Uq 根据 Iq 独立翻转；采集边沿窗口依据 d 轴。当前 DQ 只在 start_I 一个点重复 repeat_times 次，不再扫描完整 3～12 A。
+8. 自动切 DQ，幅值再次清零，Imax 显示独立的 `Identification_DqCurrent_A`（上电默认 9 A），不再取 start_I。首次放行前可写该变量，例如 10.0，并确认 Imax/IDmax/IQmax≈10 A；再写 Ud_amp=100、Uq_amp=100、inj.State=1。Ud 根据 Id、Uq 根据 Iq 独立翻转；采集边沿窗口依据 d 轴。DQ 在这个电流点自动重复 repeat_times 次，随后拟合 adq。
 9. 完成自动拟合 adq，Complete=1、定点 State=DONE、Error=0，请求 IDLE+停机。保存五个系数、Rs、各轴波形和 J/R2，再等待 IDLE 后台 MTPA 提交完成。拟合完成不等于新表有效：建表失败会撤销活动表有效性，后续SPEED使用线性回退；不要把旧表数组中仍留存的数据当作新模型已接受。
 
 扫描调度使用原整数安培值，不再累加Q24步长：3→12/+1和12→3/−1均10点；3→22/+1为20点；3→12/+2只到11 A，不强行补终点。Rs恢复原预测电流升压条件，未收敛时仅预计下一电流幅值低于8 A才继续加1 V；超流/超步数仍明确FAILED，不冒充辨识成功。
+
+2026-10-13 新增 `Identification_DqCurrent_A`：与 D/Q 单轴扫描、Rs 电流阈值、HFI 幅值和保护阈值完全分开。首次 DQ 注入前（即使已进入 INJECT_COLLECT、inj.State=0）修改，在下一个控制周期更新目标；首次 inj.State=1 后，包括暂停/恢复及自动重复，都维持本轮已锁定电流，避免混合不同电流的样本。配置值可继续写入，但下一轮完整辨识才生效；实际值看 Imax/IDmax/IQmax。INIT 和重新进入 IDENTIFY 保留配置，掉电恢复 9 A，不自动写 Flash。输入必须为有限正数、能表示为正 Q24；0、负数、NaN/Inf、超表示范围或量化成 0 的值拒绝并回填上次接受值，invalid_input_count 增加。数值可表示不代表硬件允许，原电流保护不变。FLOAT_REF 原辨识流程未改。
 
 每点内部重复不手动放行；每个新电流点放行一次。PROCESS 时 State 可能短暂为 0，要同时看轴、Imax 和 state，不能看到一次 0 就重发启动。点之间不要 Stop=1，否则辨识进度复位。
 

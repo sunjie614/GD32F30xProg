@@ -49,6 +49,7 @@ typedef struct
     FocIqParameters_t parameters;
     FocMode_t gateway_previous_mode;
     float gateway_speed_ramp_slope;
+    float gateway_identification_dq_current_a;
     SensorlessGatewayState_t sensorless_gateway;
     A2lPidMirror_t gateway_pid_cache[3];
     float gateway_ramp_minimum, gateway_ramp_maximum;
@@ -93,6 +94,9 @@ extern volatile uint32_t FixedControl_CycleCount;
 extern volatile FixedControlSelfTest_t FixedControl_SelfTest;
 extern volatile float Identification_Voltage;
 extern volatile float Identification_Rs;
+/* Writable amperes, independent of Experiment.start_I/final_I/step_dir.
+ * A running DQ repeat batch retains its initially latched current. */
+extern volatile float Identification_DqCurrent_A;
 extern volatile uint16_t Identification_State;
 extern volatile uint16_t Identification_Error;
 /* Observation only: writing this mirror never selects the control path. */

@@ -116,6 +116,8 @@ void IdentificationIq_DefaultConfig(IdentificationIqConfig_t* config)
         .rs_hold_cycles = 15000U,
         .current_start_pu = MC_CONST(3.0 / MC_CURRENT_BASE_A),
         .current_final_pu = MC_CONST(12.0 / MC_CURRENT_BASE_A),
+        .dq_current_pu = MC_CONST(
+            IDENTIFICATION_IQ_DQ_CURRENT_DEFAULT_A / MC_CURRENT_BASE_A),
         /* The default PU-only fixture has ten inclusive grid points. Derive
          * its step from the represented endpoints so constant-macro rounding
          * cannot move its tenth point beyond the represented 12 A endpoint.
@@ -195,6 +197,21 @@ static bool identification_start_current_series(IdentificationIqState_t* state)
         return identification_set_scan_current(state, state->config.current_start_a);
     }
     state->current_target_pu = state->config.current_start_pu;
+    return true;
+}
+
+static bool identification_set_dq_current(IdentificationIqState_t* state)
+{
+    /* This is a threshold magnitude, independent of the D/Q scan direction.
+     * The gateway checks physical-unit inputs before quantization; direct
+     * core callers must also provide a strictly positive represented value. */
+    if (!(state->config.dq_current_pu > MC_ZERO))
+    {
+        state->error = IDENTIFICATION_IQ_INVALID_CONFIG;
+        state->state = IDENTIFICATION_IQ_FAILED;
+        return false;
+    }
+    state->current_target_pu = state->config.dq_current_pu;
     return true;
 }
 
@@ -790,6 +807,7 @@ static bool identification_fit_manual_axis(IdentificationIqState_t* state)
             return false;
         state->single_axis_fit_complete = true;
         state->injection_mode = IDENTIFICATION_IQ_INJECT_DQ;
+        state->dq_current_latched = false;
     }
     else
     {
@@ -916,7 +934,9 @@ static void identification_run_manual(IdentificationIqState_t* state,
         }
         break;
     case IDENTIFICATION_IQ_PENDING:
-        if (!identification_start_current_series(state))
+        if (!(state->injection_mode == IDENTIFICATION_IQ_INJECT_DQ
+              ? identification_set_dq_current(state)
+              : identification_start_current_series(state)))
             break;
         identification_reset_capture(state);
         state->point_started = false;
@@ -938,6 +958,18 @@ void IdentificationIq_Run(IdentificationIqState_t* state,
     {
         IdentificationIq_Reset(state);
         return;
+    }
+    if (state->state == IDENTIFICATION_IQ_INJECT_COLLECT
+        && state->injection_mode == IDENTIFICATION_IQ_INJECT_DQ
+        && !state->dq_current_latched)
+    {
+        /* Refresh even while waiting with inj.State=0, so the operator sees
+         * the accepted threshold before release. Once any injection starts,
+         * hold it across pauses and repeats; never mix currents in one fit. */
+        if (!identification_set_dq_current(state))
+            return;
+        if (!state->config.manual_control || input->injection_enable)
+            state->dq_current_latched = true;
     }
     if (state->config.manual_control)
     {
@@ -1032,6 +1064,9 @@ void IdentificationIq_Run(IdentificationIqState_t* state,
     case IDENTIFICATION_IQ_PENDING:
         state->injection_mode = IDENTIFICATION_IQ_INJECT_DQ;
         state->repeat_count = 0U;
+        state->dq_current_latched = false;
+        if (!identification_set_dq_current(state))
+            break;
         identification_reset_capture(state);
         state->state = IDENTIFICATION_IQ_INJECT_COLLECT;
         break;

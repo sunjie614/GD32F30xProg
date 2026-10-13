@@ -168,18 +168,20 @@ start_I/final_I 是整数 A；step_dir 仅表示方向，步长固定 1 A，写 
 
 ### 5.5 DQ 交叉注入与完成
 
-1. 自动到 inj.mode=INJECT_DQ（2），等待 INJECT_COLLECT，Imax 回到 start_I≈3 A。
-2. 写 Ud_amp=100、Uq_amp=100，再写一次 inj.State=1。
+1. 自动到 inj.mode=INJECT_DQ（2），等待 INJECT_COLLECT。2026-10-13 起，Imax 使用独立变量 `Identification_DqCurrent_A`，上电默认 9 A，不再取 start_I。
+2. 首次 DQ 放行前，直接在上位机按 A 写 `Identification_DqCurrent_A`（例如 10.0，也可小数），确认 Imax/IDmax/IQmax 已更新；写 Ud_amp=100、Uq_amp=100，再写一次 inj.State=1。
 3. Ud 看 Id 到 ±Imax，Uq 看 Iq 到 ±Imax，两轴独立翻转；采样窗口以 d 轴电压翻转边沿计数。
-4. 当前 DQ 仅在一个 start_I 电流点自动重复 repeat_times 次，随后拟合 adq，不再扫描完整 3～12 A。
+4. DQ 在独立目标电流点自动重复 repeat_times 次，随后拟合 adq，不扫描完整 3～12 A。首次注入后整组重复锁定该电流；期间修改新变量留待下一轮完整辨识生效，暂停/恢复不解除锁定。9 A 表示两轴分别在 ±9 A 翻转，不是合成电流 9 A。
 5. 成功时 Complete=1、Experiment.state=DONE、Identification_State=7、Error=0，自动请求 IDLE、停机。结果在 IDLE 锁存。
 6. IDLE 主循环后台重建/提交 MTPA。等待 RebuildPending=0，确认 RebuildFailed=0，之后再使用辨识模型。2026-10-12修订：新模型失败时旧表数组保留供诊断，但活动表有效性撤销；后续SPEED采用Id=|Iq|回退，`Mtpa_LinearFallback=1`可观察。回退电感为配置标称值，不代表辨识成功。表无效时热INIT仍会被原就绪检查拒绝，勿强行改状态释放Stop。
 
 重新进入 IDENTIFY 会初始化镜像并清除本次结果，先导出数据。
 
+独立的 `Identification_DqCurrent_A` 配置在 INIT、重新进入 IDENTIFY 时保留；掉电恢复 9 A。0、负数、非有限值、超 Q24 表示范围及量化为 0 的值会拒绝、回填上次接受值并计无效输入。它不改变 D/Q 扫描起止值、Rs 流程或保护限值；内核仍只保存 Q24 数值。新固件必须加载同次生成的 A2L 才能按该变量名调参。
+
 ## 6. 停止与重来
 
-**当前 Experiment.inj.State=0 不能用于正在注入时暂停或急停。** 它是新电流点的启动放行；point_started 锁存后会自动完成点内重复，网关还可能将 State 写回 1。旧浮点代码每周期检查 State，这一行为当前存在差异。
+**当前 Experiment.inj.State=0 可暂停辨识注入/采集，但不是硬件急停。** 新点首次放行后，同一点内部重复自动执行；采集中写 0 保留历史样本，恢复 1 后继续。DQ 暂停不会解除本轮电流锁定。若启用了 HFI，暂停辨识不关闭额外 HFI 注入。暂停后的采样物理连续性需重新考虑；完整操作语义以 `IQmath_Mode_Operation_Guide.md` 第 8 节为准。
 
 需立即停止使用原硬件急停；软件正常停机写 Stop=1 并置 Foc_Mode=IDLE，核实主输出禁止。不要靠清幅值、写 state=WAIT、改 inj.mode 或仅清 inj.State 停机。上位机失联由硬件急停处理。
 
@@ -213,7 +215,7 @@ Experiment.state 接受 Rs 启动、成功后首次 NEXT_I 命令；其他阶段
 
 FAILED 自动请求 IDLE，旧 Experiment.state 显示 WAIT，务必同时看 Identification_State=8 和 Error。Error/结果在 IDLE 保留，重新进入 IDENTIFY 清零。
 
-生效输入：start_I/final_I/step_dir、repeat_times/max_steps/sample_capacity/wait_edges、inj.Ud_amp/Uq_amp、每点首次放行 inj.State、条件满足时 state=EST_RS/NEXT_I。每周期读取，在 WAIT 或等待新点放行时设置；采集中不要修改范围、方向或容量。
+生效输入：start_I/final_I/step_dir、独立 `Identification_DqCurrent_A`、repeat_times/max_steps/sample_capacity/wait_edges、inj.Ud_amp/Uq_amp、每点首次放行 inj.State、条件满足时 state=EST_RS/NEXT_I。每周期读取，在 WAIT 或等待新点放行时设置；采集中不要修改范围、方向或容量。DQ 电流首次放行后按第 5.5 节锁定。
 
 inj.mode/Imax/IDmax/IQmax、Ts、Rs_est、Identification_Voltage、LLS 系数是观察镜像，写入不能等价修改内核。写 Rs_est 不能跳过 Rs；Ts 未接成任意在线采样周期设置。Identification_Voltage 显示当前 D/Q 幅值较大绝对值，不是 Rs 电压或唯一注入控制。
 
